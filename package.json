@@ -19,6 +19,7 @@
     "typecheck": "tsgo"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "3.0.86",
     "@ai-sdk/openai": "3.0.74",
     "@opentelemetry/exporter-trace-otlp-http": "0.219.0",
     "@opentelemetry/resources": "2.8.0",

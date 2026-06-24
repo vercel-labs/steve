@@ -20,7 +20,7 @@ result — each a distinct durable step, and all code runs inside the sandbox.
 | --- | --- |
 | Vercel Workflow (managed durability) | `@workflow/world-postgres` + Dockerized Postgres |
 | Vercel Sandbox | Docker container sandbox (`eve/sandbox/docker`) |
-| AI Gateway | direct `@ai-sdk/openai` + `OPENAI_API_KEY` |
+| AI Gateway | direct `@ai-sdk/openai` / `@ai-sdk/anthropic` + provider key |
 | Agent Runs dashboard | `workflow inspect runs` / `workflow web` |
 | Vercel Connect / Blob / Cron | not used |
 
@@ -32,16 +32,23 @@ crash-recovery durability, no-Vercel).
 - **Node >= 24** (tested on 24.15.0)
 - **pnpm** (tested on 10.33.2)
 - **Docker** (Engine 24+, used for both Postgres and the agent sandbox)
-- An **OpenAI API key with quota** (`OPENAI_API_KEY`)
+- A provider API key with quota: **`OPENAI_API_KEY`** (default) or
+  **`ANTHROPIC_API_KEY`** (fallback)
 
 ### Model choice
 
-`agent/agent.ts` uses **`gpt-5-mini`** — chosen so anyone can run the proofs
-cheaply while still getting reliable multi-step tool calling. It completes the
+`agent/agent.ts` selects a provider based on which key you set:
+
+- **OpenAI (default):** `gpt-5-mini`, reading `OPENAI_API_KEY`.
+- **Anthropic (fallback):** `claude-haiku-4-5`, reading `ANTHROPIC_API_KEY`,
+  used automatically when `OPENAI_API_KEY` is unset.
+
+Both are cheap so anyone can run the proofs, and both reliably complete the
 generate → analyze → summarize loop with correct, sandbox-computed numbers.
-Swap in `gpt-5.1` for fewer steps/higher quality, or experiment with
-`gpt-5-nano` for lower cost (less reliable at multi-step orchestration). Any
-direct provider works — change the `openai("...")` call and the matching key.
+Either way the call goes directly to the provider (no AI Gateway). Swap in a
+bigger model (e.g. `gpt-5.1` or `claude-sonnet-4-6`) for higher quality, or
+wire any other direct provider by changing the model object in `agent.ts` and
+setting the matching key.
 
 ## Pinned versions
 
@@ -53,6 +60,7 @@ These are pinned exactly in `package.json`; the beta line matters (see Gotchas).
 | `@workflow/world-postgres` | `5.0.0-beta.19` |
 | `workflow` (CLI) | `4.5.0` |
 | `@ai-sdk/openai` | `3.0.74` |
+| `@ai-sdk/anthropic` | `3.0.86` |
 | `ai` | `7.0.0-canary.171` |
 | `@opentelemetry/sdk-node` | `0.219.0` |
 
@@ -73,7 +81,8 @@ make db-migrate               # create the Workflow world schema (idempotent)
 The required env vars (see `.env.example` for the full list):
 
 ```bash
-OPENAI_API_KEY="sk-..."                                  # funded key, direct (no Gateway)
+OPENAI_API_KEY="sk-..."                                  # default provider, direct (no Gateway)
+# ANTHROPIC_API_KEY="sk-ant-..."                         # fallback if OPENAI_API_KEY is unset
 WORKFLOW_POSTGRES_URL="postgres://world:world@localhost:5544/world"
 WORKFLOW_TARGET_WORLD="@workflow/world-postgres"          # default backend for the CLI
 WORKFLOW_QUEUE_NAMESPACE="eve"                            # MUST be "eve" (see Gotchas)
@@ -175,7 +184,8 @@ Docker. There is **no Vercel deploy step**.
    require KVM/nested virtualization, unlike microsandbox).
 2. Install Docker + Docker Compose and Node 24 + pnpm.
 3. Copy the repo, `pnpm install`, set `.env` (use a strong
-   `ROUTE_AUTH_BASIC_PASSWORD`, real `OPENAI_API_KEY`, and point
+   `ROUTE_AUTH_BASIC_PASSWORD`, a real `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`,
+   and point
    `WORKFLOW_POSTGRES_URL` at your Postgres).
 4. `make db-up && make db-migrate`.
 5. Run the host under a process manager (systemd / pm2):
@@ -216,7 +226,7 @@ These were discovered while building; full detail in `_internal/ISSUES.md`.
 
 ```
 agent/
-  agent.ts                 direct OpenAI model + experimental.workflow.world
+  agent.ts                 direct OpenAI/Anthropic model + experimental.workflow.world
   instructions.md          data-analyst persona (always computes via the sandbox)
   channels/eve.ts          HTTP channel, auth = [localDev(), httpBasic()]
   sandbox/sandbox.ts        Docker backend, deny-all egress
