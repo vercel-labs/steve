@@ -80,6 +80,18 @@
     daemon_reload: true
   become: true
 
+# `next start` serves one fixed build; every `next build` changes the asset
+# hashes in the served HTML, so a running server keeps emitting HTML that
+# references CSS/JS chunks the new .next no longer has -> 500s and broken styling.
+# Always restart the server after a build so the served HTML matches disk.
+# (A notify handler isn't enough: it only fires when the unit file changes.)
+- name: Restart steve-web to serve the fresh build
+  ansible.builtin.systemd:
+    name: steve-web
+    state: restarted
+  become: true
+  when: web_build is changed
+
 - name: Wait for the web app to answer on localhost
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ web_port }}/"
