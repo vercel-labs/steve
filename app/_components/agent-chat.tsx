@@ -147,7 +147,7 @@ export function AgentChat() {
       >
         {isEmpty ? (
           <div className="flex flex-col items-center gap-4 text-center">
-            <h1 className="font-medium text-5xl" style={{ letterSpacing: "0.02em" }}>
+            <h1 className="font-medium text-5xl tracking-tighter">
               <span className="text-muted-foreground/50">st</span>
               <span className="text-foreground">eve</span>
             </h1>
