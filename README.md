@@ -7,7 +7,7 @@ runs **end to end with zero Vercel-proprietary infrastructure**:
   (`@workflow/world-postgres`), not Vercel Workflow.
 - **Code isolation** comes from a **Docker sandbox**, not Vercel Sandbox.
 - **Model calls** go **directly to OpenAI**, not through the AI Gateway.
-- **Observability** comes from the **Workflow CLI** + optional **Jaeger**, not
+- **Observability** comes from the **Workflow CLI** + optional **Jaeger/Axiom**, not
   the Vercel Agent Runs dashboard.
 
 The agent is a durable, multi-step **data analyst**: given a request it
@@ -121,6 +121,41 @@ docker compose --profile observability up -d jaeger
 # traces at http://localhost:16686
 ```
 
+### Send traces and logs to Axiom
+
+For external visibility, ship both signals to [Axiom](https://axiom.co) — into a
+single dataset (named `steve` here, fine for the free plan):
+
+- **Traces** (eve's `ai.eve.turn` / model-call / tool-call spans) are exported
+  by `agent/instrumentation.ts` directly over OTLP/HTTP.
+- **Console logs** (the eve host's stdout/stderr) are shipped by a **Vector**
+  sidecar that tails `./logs/host.log`. eve emits no OTel logs signal, so logs
+  are collected at the process level rather than through instrumentation.
+
+Setup:
+
+1. In Axiom, create a dataset (e.g. `steve`) and an API token with ingest
+   permission on it.
+2. In `.env`, set:
+   ```bash
+   AXIOM_TOKEN="xaat-..."
+   AXIOM_DATASET="steve"          # optional, defaults to "steve"
+   AXIOM_DOMAIN="api.axiom.co"    # optional, or api.eu.axiom.co
+   ```
+   (Setting `AXIOM_TOKEN` takes precedence over the Jaeger `OTEL_*` path.)
+3. Run the agent and the log shipper:
+   ```bash
+   make dev          # writes logs to ./logs/host.log
+   make logs-up      # starts the Vector sidecar -> Axiom (in another terminal)
+   ```
+4. Drive a session (`make session`) and view traces + logs in the Axiom `steve`
+   dataset. Logs are tagged `source: eve-host` to distinguish them from spans.
+
+> Single dataset works because traces arrive via OTLP and logs via Vector's
+> `axiom` sink; on a paid plan you can split them into `steve-traces` /
+> `steve-logs`. For a fully containerized VPS deployment, switch `vector.toml`'s
+> `file` source to a `docker_logs` source instead of tailing a file.
+
 ## The three proofs
 
 Full runbook in **[PROOF.md](./PROOF.md)**. In short:
@@ -186,10 +221,11 @@ agent/
   channels/eve.ts          HTTP channel, auth = [localDev(), httpBasic()]
   sandbox/sandbox.ts        Docker backend, deny-all egress
   tools/run_python.ts      executes Python in the sandbox -> {stdout,stderr,exitCode}
-  instrumentation.ts       vanilla OTel -> Jaeger (optional)
-docker-compose.yml         postgres:16 (+ jaeger under the `observability` profile)
-Makefile                   db-up, db-migrate, dev, observe, proof-* targets
+  instrumentation.ts       OTel traces -> Jaeger or Axiom (optional)
+vector.toml                Vector: tail host logs -> Axiom (optional)
+docker-compose.yml         postgres:16 (+ jaeger `observability` / vector `logs` profiles)
+Makefile                   db-up, db-migrate, dev, observe, logs-up, proof-* targets
 .env.example
 PROOF.md                   the three proofs, step by step
-_internal/                 PLAN.md and ISSUES.md (notes for the eve team)
+_internal/                 PLAN.md, ISSUES.md, DX_NOTES.md (notes for the eve team)
 ```

@@ -1,5 +1,6 @@
 # Self-hosted infrastructure for the eve PoC.
-# No Vercel services: durability is Postgres, traces go to local Jaeger.
+# No Vercel services: durability is Postgres; traces go to local Jaeger or
+# Axiom; console logs go to Axiom via Vector.
 services:
   postgres:
     image: postgres:16
@@ -31,6 +32,21 @@ services:
     ports:
       - "16686:16686" # Jaeger UI
       - "4318:4318"   # OTLP HTTP receiver
+
+  # Optional: ship the eve host's console logs to Axiom.
+  # Start with `docker compose --profile logs up -d` (or `make logs-up`).
+  # Requires AXIOM_TOKEN (and optionally AXIOM_DATASET, AXIOM_DOMAIN) in .env.
+  # Tails ./logs/host.log, which `make dev` writes to.
+  vector:
+    image: timberio/vector:0.49.0-debian
+    container_name: steve-vector
+    profiles: ["logs"]
+    env_file:
+      - .env
+    volumes:
+      - ./vector.toml:/etc/vector/vector.toml:ro
+      - ./logs:/logs:ro
+    command: ["--config", "/etc/vector/vector.toml"]
 
 volumes:
   steve-pgdata:

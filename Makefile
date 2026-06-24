@@ -2,7 +2,7 @@
 # Everything here runs without any Vercel service.
 
 .PHONY: help db-up db-down db-migrate dev observe observe-web build clean \
-        proof-isolation proof-novercel session
+        proof-isolation proof-novercel session logs-up logs-down
 
 help:
 	@echo "Targets:"
@@ -11,6 +11,8 @@ help:
 	@echo "  make dev           Run the long-running host (eve dev --no-ui)"
 	@echo "  make observe       List durable runs from Postgres (workflow inspect runs)"
 	@echo "  make observe-web   Open the Workflow web UI against Postgres"
+	@echo "  make logs-up       Ship host console logs to Axiom via Vector"
+	@echo "  make logs-down     Stop the Vector log shipper"
 	@echo "  make build         Compile the agent (eve build)"
 	@echo "  make session       Start a sample analysis session via curl"
 	@echo "  make proof-isolation  Run the sandbox isolation proof"
@@ -34,8 +36,11 @@ build:
 # The long-running host. IMPORTANT: use `eve dev --no-ui`, NOT `eve start`.
 # In eve 0.13.3 only the dev host registers the configured world's queue
 # handler; `eve start` returns "Unhandled queue". See _internal/ISSUES.md.
+# Logs are tee'd to ./logs/host.log so the optional Vector sidecar can ship
+# them to Axiom while you still see them in the terminal.
 dev:
-	PORT=3000 pnpm exec eve dev --no-ui --host 0.0.0.0 --logs all
+	@mkdir -p logs
+	PORT=3000 pnpm exec eve dev --no-ui --host 0.0.0.0 --logs all 2>&1 | tee logs/host.log
 
 # Observability (replaces the Vercel Agent Runs dashboard).
 # WORKFLOW_TARGET_WORLD in .env selects the Postgres backend by default.
@@ -44,6 +49,14 @@ observe:
 
 observe-web:
 	pnpm exec workflow web --backend @workflow/world-postgres
+
+# Ship the eve host's console logs to Axiom via Vector (reads ./logs/host.log).
+# Requires AXIOM_TOKEN in .env. Run `make dev` in another terminal first.
+logs-up:
+	docker compose --profile logs up -d vector
+
+logs-down:
+	docker compose --profile logs down
 
 # Start a sample three-step analysis session against the running host.
 session:
@@ -75,5 +88,5 @@ proof-novercel:
 	fi
 
 clean:
-	docker compose down
-	rm -rf .output .eve/nitro
+	docker compose --profile observability --profile logs down
+	rm -rf .output .eve/nitro logs

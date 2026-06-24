@@ -1,0 +1,30 @@
+# Vector config: ship the eve host's console logs to Axiom.
+#
+# The eve host runs on the machine (via `make dev`) and writes its stdout/stderr
+# to ./logs/host.log (mounted into this container at /logs/host.log). Vector
+# tails that file and forwards each line to the Axiom `steve` dataset.
+#
+# eve emits no OpenTelemetry logs signal, so console logs are collected at the
+# process level here, while traces are exported by agent/instrumentation.ts.
+
+[sources.eve_host]
+type = "file"
+include = ["/logs/host.log"]
+read_from = "beginning"
+
+# Tag each event so logs are distinguishable from traces in the shared dataset.
+[transforms.tag]
+type = "remap"
+inputs = ["eve_host"]
+source = '''
+  .source = "eve-host"
+  .service = "steve"
+'''
+
+[sinks.axiom]
+type = "axiom"
+inputs = ["tag"]
+token = "${AXIOM_TOKEN}"
+dataset = "${AXIOM_DATASET:-steve}"
+# Base domain of your Axiom edge (api.axiom.co or api.eu.axiom.co).
+region = "${AXIOM_DOMAIN:-api.axiom.co}"

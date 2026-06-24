@@ -117,6 +117,37 @@ Legend: [+] delight / good design  ·  [~] friction / surprise  ·  [!] sharp ed
 
 ---
 
+## Observability backends (Jaeger / Axiom) — follow-up
+
+- **[+] Swapping the trace backend was config-only.** Pointing eve's traces from
+  Jaeger to Axiom meant changing the OTLP exporter `url` and adding two headers
+  in `instrumentation.ts` — no new dependencies, no eve changes. The
+  vendor-neutral `defineInstrumentation` + standard OTel exporter design pays off
+  here. Strong evidence for the portability thesis.
+
+- **[!] eve emits no OpenTelemetry logs signal — only traces + stderr.** This
+  was the one real gap when wiring up external log visibility. eve's structured
+  observability is traces (`ai.eve.turn` spans) and Postgres `$eve.*` run tags;
+  its "logs" are plain console output (the `--logs` TUI flag). There is no
+  `LoggerProvider` / `sdk-logs` integration, so an OTel-logs exporter would ship
+  nothing. To get the rich console stream (startup, queue activity, model errors
+  like `insufficient_quota`, `Re-enqueued N active run(s)`) into a backend, we
+  had to collect at the process level — a Vector sidecar tailing the host log
+  file. That works well, but it's external plumbing the framework doesn't help
+  with.
+
+  Suggestion for the team: consider emitting key runtime events (turn/step
+  lifecycle, tool calls, world/queue events, model errors) as OTel LogRecords
+  (or at least structured JSON to stdout) so a single OTel pipeline can carry
+  both traces and logs. Today, traces are first-class and logs are DIY.
+
+- **[~] Jaeger is traces-only — easy to forget.** Worth a doc line that the
+  bundled Jaeger profile handles traces only; logs need a different backend
+  (Axiom, Loki, etc.). Not eve's fault, but it surfaces because eve points you at
+  Jaeger for "observability."
+
+---
+
 ## Suggestions (high-leverage, in priority order)
 
 1. **Compat check the configured world's `@workflow/world` against eve's
