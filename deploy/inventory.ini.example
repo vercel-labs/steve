@@ -1,0 +1,10 @@
+# This file is generated/updated automatically by provision.yml after the
+# droplet is created. The real inventory.ini is gitignored (it contains the
+# droplet's public IP). Shown here only for reference / manual override.
+#
+# [steve]
+# 203.0.113.10
+#
+# [steve:vars]
+# ansible_user=deploy            # set by provision.yml after bootstrap
+# ansible_ssh_private_key_file=~/.ssh/id_ed25519

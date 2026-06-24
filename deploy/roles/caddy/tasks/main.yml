@@ -1,0 +1,38 @@
+---
+# Install Caddy and configure it as the public reverse proxy in front of the
+# eve host. Injects `x-hosted-on-vercel: false` on every response and proxies
+# ALL paths (so eve's internal /.well-known/workflow/v1/flow callback works).
+
+- name: Add Caddy's GPG key
+  ansible.builtin.get_url:
+    url: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
+    dest: /etc/apt/keyrings/caddy-stable.asc
+    mode: "0644"
+
+- name: Add the Caddy apt repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by=/etc/apt/keyrings/caddy-stable.asc]
+      https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main
+    filename: caddy-stable
+    state: present
+
+- name: Install Caddy
+  ansible.builtin.apt:
+    name: caddy
+    state: present
+    update_cache: true
+
+- name: Render the Caddyfile
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: /etc/caddy/Caddyfile
+    mode: "0644"
+    validate: "caddy validate --config %s --adapter caddyfile"
+  notify: Reload caddy
+
+- name: Enable and start Caddy
+  ansible.builtin.service:
+    name: caddy
+    enabled: true
+    state: started

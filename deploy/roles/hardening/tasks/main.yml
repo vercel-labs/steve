@@ -1,0 +1,112 @@
+---
+# Security baseline for a fresh Ubuntu 24.04 droplet.
+
+- name: Update apt cache and upgrade installed packages
+  ansible.builtin.apt:
+    update_cache: true
+    upgrade: safe
+    cache_valid_time: 3600
+
+- name: Install base + security packages
+  ansible.builtin.apt:
+    name:
+      - git
+      - curl
+      - ca-certificates
+      - ufw
+      - fail2ban
+      - unattended-upgrades
+      - python3-debian
+    state: present
+
+# --- deploy user ----------------------------------------------------------
+- name: Create the deploy user
+  ansible.builtin.user:
+    name: "{{ app_user }}"
+    shell: /bin/bash
+    create_home: true
+    groups: sudo
+    append: true
+
+- name: Allow the deploy user passwordless sudo
+  ansible.builtin.copy:
+    dest: "/etc/sudoers.d/90-{{ app_user }}"
+    mode: "0440"
+    validate: "visudo -cf %s"
+    content: "{{ app_user }} ALL=(ALL) NOPASSWD:ALL\n"
+
+- name: Install the operator SSH key for the deploy user
+  ansible.posix.authorized_key:
+    user: "{{ app_user }}"
+    key: "{{ lookup('file', local_ssh_pubkey_path | expanduser) }}"
+    state: present
+
+# --- SSH hardening --------------------------------------------------------
+- name: Harden sshd (no root login, key-only auth)
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/99-hardening.conf
+    mode: "0644"
+    content: |
+      # Managed by Ansible (hardening role). Do not edit by hand.
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      ChallengeResponseAuthentication no
+      UsePAM yes
+      X11Forwarding no
+      MaxAuthTries 3
+  notify: Restart sshd
+
+# --- firewall -------------------------------------------------------------
+- name: UFW default deny incoming
+  community.general.ufw:
+    direction: incoming
+    policy: deny
+
+- name: UFW default allow outgoing
+  community.general.ufw:
+    direction: outgoing
+    policy: allow
+
+- name: UFW allow SSH, HTTP, HTTPS
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop:
+    - "22"
+    - "80"
+    - "443"
+
+- name: Enable UFW
+  community.general.ufw:
+    state: enabled
+
+# --- fail2ban -------------------------------------------------------------
+- name: Configure fail2ban sshd jail
+  ansible.builtin.copy:
+    dest: /etc/fail2ban/jail.d/sshd.local
+    mode: "0644"
+    content: |
+      [sshd]
+      enabled = true
+      port = 22
+      maxretry = 5
+      bantime = 1h
+      findtime = 10m
+  notify: Restart fail2ban
+
+- name: Enable and start fail2ban
+  ansible.builtin.service:
+    name: fail2ban
+    enabled: true
+    state: started
+
+# --- automatic security updates ------------------------------------------
+- name: Enable unattended-upgrades
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    mode: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";

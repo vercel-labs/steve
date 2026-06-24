@@ -11,3 +11,8 @@ dist
 .DS_Store
 *.tsbuildinfo
 logs
+
+# Ansible deploy tooling
+deploy/.galaxy
+deploy/inventory.ini
+deploy/*.retry

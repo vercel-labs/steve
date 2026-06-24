@@ -1,0 +1,42 @@
+---
+# Phase 2 — deploy (and redeploy) the app. Connects as the unprivileged
+# deploy user created during bootstrap; escalates with sudo where needed.
+#
+# First deploy:
+#   ansible-playbook deploy.yml
+#   (pauses once to let you add the printed deploy key to GitHub)
+#
+# Redeploy new code:
+#   ansible-playbook deploy.yml [-e git_ref=<branch|sha>]
+- name: Deploy the steve eve-agent host
+  hosts: steve
+  remote_user: "{{ app_user }}"
+  become: false
+  gather_facts: true
+  roles:
+    - role: docker
+      become: true
+    - role: app
+    - role: caddy
+      become: true
+
+  post_tasks:
+    - name: Wait for the eve host to answer on localhost
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ app_port }}/eve/v1/health"
+        status_code: [200, 401]
+      register: health
+      retries: 20
+      delay: 3
+      until: health.status in [200, 401]
+
+    - name: Deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "steve is running. systemd: 'systemctl status steve'."
+          - >-
+            {{ 'Public URL: https://' + domain + '/eve/v1/health'
+               if (domain | default('') | length > 0)
+               else 'Public URL (pre-domain): http://' + inventory_hostname + '/eve/v1/health' }}
+          - "Auth: HTTP Basic (ROUTE_AUTH_BASIC_USER / _PASSWORD)."
+          - "Header check: curl -I returns 'x-hosted-on-vercel: false'."

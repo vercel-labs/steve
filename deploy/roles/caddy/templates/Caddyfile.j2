@@ -1,0 +1,37 @@
+# Managed by Ansible (caddy role).
+#
+# Reverse proxy in front of the eve host (127.0.0.1:{{ app_port }}).
+# - Proxies ALL paths so eve's internal queue callback
+#   (/.well-known/workflow/v1/flow) and /eve/v1/* both work.
+# - Injects `x-hosted-on-vercel: false` on every response (the `header`
+#   directive applies to all responses, including proxied ones).
+
+{% if acme_email | default('') | length > 0 %}
+{
+	email {{ acme_email }}
+}
+{% endif %}
+
+{% if domain | default('') | length > 0 %}
+# --- Production: real domain with automatic Let's Encrypt TLS ---
+{{ domain }} {
+	header {
+		# Strip any upstream value, then assert false. Demonstrates this
+		# deployment is NOT on Vercel.
+		-X-Hosted-On-Vercel
+		X-Hosted-On-Vercel "false"
+	}
+	reverse_proxy 127.0.0.1:{{ app_port }}
+}
+{% else %}
+# --- Pre-domain: serve over plain HTTP on :80 (smoke-test by IP) ---
+# Set `domain` (and ideally `acme_email`) in group_vars/all.yml and re-run
+# deploy.yml to switch to HTTPS once DNS points at this droplet.
+:80 {
+	header {
+		-X-Hosted-On-Vercel
+		X-Hosted-On-Vercel "false"
+	}
+	reverse_proxy 127.0.0.1:{{ app_port }}
+}
+{% endif %}

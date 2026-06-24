@@ -1,0 +1,206 @@
+---
+# Install the runtime, fetch the code, render .env, bring up Postgres, migrate
+# the Workflow schema, and run the eve host under systemd.
+
+# --- Node 24 + pnpm -------------------------------------------------------
+- name: Add NodeSource GPG key
+  ansible.builtin.get_url:
+    url: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+    dest: /etc/apt/keyrings/nodesource.asc
+    mode: "0644"
+  become: true
+
+- name: Add the NodeSource apt repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by=/etc/apt/keyrings/nodesource.asc]
+      https://deb.nodesource.com/node_{{ node_major }}.x nodistro main
+    filename: nodesource
+    state: present
+  become: true
+
+- name: Install Node.js
+  ansible.builtin.apt:
+    name: "nodejs"
+    state: present
+    update_cache: true
+  become: true
+
+- name: Enable corepack and pin pnpm
+  ansible.builtin.command: "corepack prepare pnpm@{{ pnpm_version }} --activate"
+  become: true
+  changed_when: false
+
+- name: Enable corepack (symlinks pnpm/yarn shims)
+  ansible.builtin.command: corepack enable
+  become: true
+  changed_when: false
+
+# --- GitHub deploy key (read-only) ---------------------------------------
+- name: Ensure the deploy user's .ssh directory exists
+  ansible.builtin.file:
+    path: "/home/{{ app_user }}/.ssh"
+    state: directory
+    owner: "{{ app_user }}"
+    group: "{{ app_user }}"
+    mode: "0700"
+
+- name: Generate a dedicated GitHub deploy key
+  community.crypto.openssh_keypair:
+    path: "/home/{{ app_user }}/.ssh/steve_deploy"
+    type: ed25519
+    owner: "{{ app_user }}"
+    group: "{{ app_user }}"
+    mode: "0600"
+  register: deploy_key
+  become: true
+  become_user: "{{ app_user }}"
+
+- name: Configure SSH to use the deploy key for github.com
+  ansible.builtin.copy:
+    dest: "/home/{{ app_user }}/.ssh/config"
+    owner: "{{ app_user }}"
+    group: "{{ app_user }}"
+    mode: "0600"
+    content: |
+      Host github.com
+        HostName github.com
+        User git
+        IdentityFile ~/.ssh/steve_deploy
+        IdentitiesOnly yes
+        StrictHostKeyChecking accept-new
+
+- name: Check whether the deploy key can already read the repo
+  ansible.builtin.command: "git ls-remote {{ app_repo }}"
+  become: true
+  become_user: "{{ app_user }}"
+  register: repo_access
+  changed_when: false
+  failed_when: false
+
+- name: Pause so the deploy key can be authorized on GitHub
+  when: repo_access.rc != 0
+  ansible.builtin.pause:
+    prompt: |
+
+      ============================================================
+      ACTION REQUIRED — add this read-only Deploy Key to the repo:
+
+        https://github.com/vercel-labs/steve/settings/keys/new
+
+      Title: steve-droplet
+      Key (leave "Allow write access" UNCHECKED):
+
+      {{ deploy_key.public_key }}
+
+      Press ENTER here once the key has been added.
+      ============================================================
+
+- name: Re-check repo access after authorizing the key
+  when: repo_access.rc != 0
+  ansible.builtin.command: "git ls-remote {{ app_repo }}"
+  become: true
+  become_user: "{{ app_user }}"
+  changed_when: false
+
+# --- Code ------------------------------------------------------------------
+- name: Clone / update the repository
+  ansible.builtin.git:
+    repo: "{{ app_repo }}"
+    dest: "{{ app_dir }}"
+    version: "{{ git_ref }}"
+    force: true
+    accept_hostkey: true
+  become: true
+  become_user: "{{ app_user }}"
+  notify: Restart steve
+
+- name: Ensure app dir ownership
+  ansible.builtin.file:
+    path: "{{ app_dir }}"
+    owner: "{{ app_user }}"
+    group: "{{ app_user }}"
+    recurse: true
+  become: true
+
+# --- Environment ----------------------------------------------------------
+# PoC simplicity: ship your local .env verbatim instead of templating from a
+# vault. The file is gitignored and never committed.
+- name: Ensure a local .env exists to copy
+  ansible.builtin.assert:
+    that:
+      - local_env_file is file
+    fail_msg: >-
+      Expected {{ local_env_file }} to exist. Create it (e.g. `cp .env.example
+      .env` in the repo root and fill in real values) before deploying.
+  delegate_to: localhost
+  become: false
+
+- name: Copy local .env to the droplet
+  ansible.builtin.copy:
+    src: "{{ local_env_file }}"
+    dest: "{{ app_dir }}/.env"
+    owner: "{{ app_user }}"
+    group: "{{ app_user }}"
+    mode: "0600"
+  become: true
+  notify: Restart steve
+
+# --- Dependencies ---------------------------------------------------------
+- name: Install Node dependencies (frozen lockfile)
+  ansible.builtin.command:
+    cmd: pnpm install --frozen-lockfile
+    chdir: "{{ app_dir }}"
+  become: true
+  become_user: "{{ app_user }}"
+  environment:
+    HOME: "/home/{{ app_user }}"
+  register: pnpm_install
+  changed_when: "'Already up to date' not in pnpm_install.stdout"
+
+# --- Postgres (durable Workflow world) ------------------------------------
+- name: Start Postgres via docker compose
+  ansible.builtin.command:
+    cmd: docker compose up -d postgres
+    chdir: "{{ app_dir }}"
+  become: true
+  become_user: "{{ app_user }}"
+  changed_when: false
+
+- name: Wait for Postgres to accept connections
+  ansible.builtin.command:
+    cmd: docker exec steve-postgres pg_isready -U world -d world
+  register: pg_ready
+  retries: 20
+  delay: 3
+  until: pg_ready.rc == 0
+  changed_when: false
+
+- name: Migrate the Workflow world schema (idempotent)
+  ansible.builtin.command:
+    cmd: pnpm exec workflow-postgres-setup
+    chdir: "{{ app_dir }}"
+  become: true
+  become_user: "{{ app_user }}"
+  environment:
+    HOME: "/home/{{ app_user }}"
+  changed_when: false
+
+# --- systemd service ------------------------------------------------------
+- name: Install the steve systemd unit
+  ansible.builtin.template:
+    src: steve.service.j2
+    dest: /etc/systemd/system/steve.service
+    mode: "0644"
+  become: true
+  notify:
+    - Reload systemd
+    - Restart steve
+
+- name: Enable and start the steve service
+  ansible.builtin.systemd:
+    name: steve
+    enabled: true
+    state: started
+    daemon_reload: true
+  become: true

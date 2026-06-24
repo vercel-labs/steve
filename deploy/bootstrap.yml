@@ -1,0 +1,14 @@
+---
+# Phase 1 — one-time security hardening + base packages on a fresh droplet.
+# Connects as root (DigitalOcean's Ubuntu default) using your local SSH key.
+#
+#   ansible-playbook bootstrap.yml
+#
+# After this runs, root SSH is disabled and all further access is via the
+# unprivileged 'deploy' user (deploy.yml connects as that user).
+- name: Harden the droplet and create the deploy user
+  hosts: steve
+  remote_user: root
+  gather_facts: true
+  roles:
+    - hardening

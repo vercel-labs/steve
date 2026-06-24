@@ -1,0 +1,30 @@
+# Managed by Ansible (app role).
+# Long-running eve host. Uses `eve dev --no-ui` (NOT `eve start`) because in
+# eve 0.13.3 only the dev host registers the custom Postgres world's queue
+# handler; `eve start` returns "Unhandled queue". See _internal/ISSUES.md.
+[Unit]
+Description=steve — self-hosted eve agent host
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User={{ app_user }}
+Group={{ app_user }}
+SupplementaryGroups=docker
+WorkingDirectory={{ app_dir }}
+EnvironmentFile={{ app_dir }}/.env
+Environment=HOME=/home/{{ app_user }}
+Environment=PORT={{ app_port }}
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Bind to localhost only; Caddy is the sole public entry point.
+ExecStart=/usr/bin/pnpm exec eve dev --no-ui --host 127.0.0.1 --port {{ app_port }} --logs all
+Restart=always
+RestartSec=5
+# Give the host time to pull the sandbox image on first boot.
+TimeoutStartSec=300
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

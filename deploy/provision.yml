@@ -1,0 +1,14 @@
+---
+# Phase 0 — create the DigitalOcean droplet and record its IP into
+# inventory.ini so the bootstrap/deploy playbooks can target it.
+#
+# Run once:
+#   ansible-playbook provision.yml
+#
+# Connects to localhost (the DO API is called from your machine).
+- name: Provision DigitalOcean droplet
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - provision
