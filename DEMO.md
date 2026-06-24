@@ -23,25 +23,29 @@ with zero Vercel coupling**.
 
 ## Act 1 — It does real work, and you can see it (≈2 min)
 
-1. Open **https://eve.phil.bingo**.
-2. Type a request, e.g.:
+steve is a **movie-database analyst**: a recognizable ~40-film dataset is seeded
+into its sandbox at `/workspace/movies.csv`, so answers are checkable by eye.
 
-   > Analyze Q4 sales by region for an outdoor gear company. Generate realistic
-   > data, compute the numbers, and chart it.
+1. Open **https://eve.phil.bingo**. (Optional: click **"What can you do?"** to
+   show it describes its skills — lookup, rank, aggregate, profit/ROI, chart.)
+2. Click a suggestion or type:
+
+   > Top 5 movies by box office — and chart it
 
 3. Narrate the steps as they stream — these are **real durable checkpoints**, not
    a single model call:
-   - **Generate** — writes Python that creates a synthetic CSV in the sandbox.
-   - **Analyze** — reads it back, computes totals / per-region breakdown.
+   - **Compute** — writes Python that reads the seeded CSV and ranks by box office.
    - **Chart** — builds a Mermaid chart spec from the computed numbers.
-   - **Summarize** — the final answer, with a **live bar chart** rendered inline.
+   - **Answer** — the reply, with a **live bar chart** rendered inline.
 
-   Expand a `run_python` tool call to show the audience the **actual Python the
+   Expand the `run_python` tool call to show the audience the **actual Python the
    model wrote** — and point out it ran in a container, not on the host.
 
-4. Land the point: *"Every number came from code the model wrote and executed in
-   an isolated sandbox — nothing was hallucinated, and none of it touched
-   Vercel."*
+4. Land the point: *"Avatar, Endgame, Titanic — those are right, and every number
+   came from code the model wrote and ran in an isolated sandbox. Nothing was
+   hallucinated, and none of it touched Vercel."* Follow up with a derived metric
+   to show it's not canned: **"Most profitable film relative to its budget"**
+   (Whiplash / Get Out rank high — tiny budgets, big returns).
 
 ## Act 2 — It's genuinely self-hosted (≈1 min)
 
@@ -61,7 +65,8 @@ with zero Vercel coupling**.
 This is the most counterintuitive, memorable part: **kill the agent mid-run and
 watch it resume.**
 
-1. Start a fresh analysis in the UI (Act 1 prompt again).
+1. Start a multi-step request in the UI, e.g. "Average box office by decade — and
+   chart it" (this does compute → chart, so there are steps to interrupt).
 2. As soon as the first step completes, **kill the agent process** on the droplet:
    ```bash
    cd deploy && make demo-kill          # hard-restarts the eve host mid-run
@@ -80,12 +85,17 @@ watch it resume.**
 
 ## Backup / variations
 
-- **Pie chart:** ask "show that as a share-of-total pie chart instead."
+- **Eye-check facts:** "What year was Inception? Who directed it?" → 2010,
+  Christopher Nolan. "How much did Titanic make?" → ~$2.2B. Validates that
+  answers come from real data, not the model guessing.
+- **Comparisons:** "Compare Nolan and Spielberg by average rating", "Which genre
+  has the highest average box office?", "Show box office share by genre as a pie
+  chart."
+- **Derived metrics:** "Most profitable film relative to budget" (ROI ranking
+  surfaces Whiplash, Get Out, Parasite — small budgets, outsized returns).
 - **Isolation proof:** ask "use run_python to print your container hostname and
   try to read the HOST_ONLY_SECRET env var." It prints a Docker container id and
   `<unset in sandbox>` — proving the host's secrets are unreachable.
-- **Different domain:** "analyze website signups by traffic source", "model a
-  week of support-ticket volume by category" — anything tabular charts well.
 
 ## If something goes wrong
 
