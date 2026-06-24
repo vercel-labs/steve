@@ -1,0 +1,36 @@
+{
+  "name": "steve",
+  "version": "0.0.0",
+  "type": "module",
+  "imports": {
+    "#*": "./agent/*",
+    "#evals/*": "./evals/*"
+  },
+  "scripts": {
+    "build": "eve build",
+    "dev": "eve dev",
+    "start": "eve start",
+    "host": "eve dev --no-ui --host 0.0.0.0",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:migrate": "workflow-postgres-setup",
+    "observe": "workflow inspect runs",
+    "observe:web": "workflow web",
+    "typecheck": "tsgo"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "3.0.74",
+    "@opentelemetry/exporter-trace-otlp-http": "0.219.0",
+    "@opentelemetry/resources": "2.8.0",
+    "@opentelemetry/sdk-node": "0.219.0",
+    "@opentelemetry/semantic-conventions": "1.41.1",
+    "@workflow/world-postgres": "5.0.0-beta.19",
+    "ai": "7.0.0-canary.171",
+    "eve": "0.13.3",
+    "workflow": "4.5.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@typescript/native-preview": "7.0.0-dev.20260523.1"
+  }
+}
