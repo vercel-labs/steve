@@ -194,6 +194,22 @@ attention. Flagging clearly which is which.
   the Ansible post-deploy readiness check trivial. Good that it's distinct from
   the authed routes.
 
+- **[!] eve routes 404 on HTTP `HEAD` — including `/eve/v1/health`.** Every
+  route we tested returns 200 to `GET` but **404 to `HEAD`** (`/eve/v1/health`,
+  `/eve/v1/info`, and `/` all behave this way; verified directly against the eve
+  host on `127.0.0.1:3000`, bypassing the proxy, so it's the framework, not
+  Caddy). This bit us concretely: `curl -I https://.../eve/v1/health` (which
+  sends HEAD) reports `HTTP/2 404`, even though `curl` (GET) returns 200 — and
+  confusingly the 404 still carries a JSON-ish body, so the payload "looks fine"
+  while the status is wrong. This matters because **HEAD is the canonical method
+  for health/uptime checks** — many load balancers, k8s probes, and monitoring
+  services (UptimeRobot et al.) default to HEAD. A HEAD against the health
+  endpoint that 404s will mark a perfectly healthy deployment as down. The eve
+  HTTP layer (Nitro/h3 router) should handle HEAD on at least `/eve/v1/health`
+  (ideally auto-deriving HEAD from GET handlers, which is standard), or the docs
+  should explicitly say "health checks must use GET." Low effort, high blast
+  radius for anyone wiring real infra in front of eve.
+
 - **[~] Reverse proxy: proxy the WHOLE origin, not just `/eve/v1/*`.** We bind
   eve to `127.0.0.1:3000` and make Caddy the only public entry, forwarding all
   paths. Beyond the public API, eve serves an internal durable-dispatch route at
@@ -246,6 +262,9 @@ attention. Flagging clearly which is which.
    socket requirement, the `docker` group, why the host can't be a vanilla
    unprivileged container, and the "proxy the whole origin (incl.
    `/.well-known/workflow/v1/flow`), not just `/eve/v1/*`" reverse-proxy gotcha.
+8. **Handle HTTP `HEAD` on `/eve/v1/health`** (ideally derive HEAD from GET
+   across the router). Today HEAD 404s, so HEAD-based health/uptime probes
+   (LBs, k8s, monitoring services) mark a healthy deployment as down.
 
 ## Bottom line
 
