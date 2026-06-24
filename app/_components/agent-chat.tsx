@@ -21,6 +21,17 @@ const AGENT_NAME = "steve";
 const BETA_TERMS_HREF = "https://vercel.com/docs/release-phases/public-beta-agreement";
 const MONITORING_HREF = "https://status.eve.phil.bingo";
 
+// Example prompts shown on the landing screen. They exercise the movie-database
+// skills (lookup, rank, aggregate, derive, chart) so a first-time visitor can
+// validate the answers by eye.
+const SUGGESTIONS = [
+  "What can you do?",
+  "Top 5 movies by box office — and chart it",
+  "Which director has the highest average rating?",
+  "Most profitable film relative to its budget",
+  "Average box office by decade",
+] as const;
+
 type AgentStatus = ReturnType<typeof useEveAgent>["status"];
 
 function Pill({
@@ -162,9 +173,9 @@ export function AgentChat() {
           <div className="flex flex-col items-center gap-4 text-center">
             <h1 className="font-medium text-5xl tracking-tighter">{AGENT_NAME}</h1>
             <p className="max-w-md text-balance text-muted-foreground text-sm">
-              A durable data-analyst agent on Vercel&apos;s eve framework — running
-              with zero Vercel infrastructure. It writes Python, runs it in an
-              isolated sandbox, and charts the result.
+              A movie-database analyst on Vercel&apos;s eve framework — running with
+              zero Vercel infrastructure. Ask about ~40 well-known films; it writes
+              Python over the data in an isolated sandbox and charts the answer.
             </p>
             <ThesisBadges />
             <a
@@ -178,6 +189,21 @@ export function AgentChat() {
           </div>
         ) : null}
         <div className="w-full">{composer}</div>
+        {isEmpty ? (
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {SUGGESTIONS.map((prompt) => (
+              <button
+                className="rounded-full border border-border px-3 py-1.5 text-muted-foreground text-xs transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                disabled={isBusy}
+                key={prompt}
+                onClick={() => void agent.send({ message: prompt })}
+                type="button"
+              >
+                {prompt}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
     </main>
   );

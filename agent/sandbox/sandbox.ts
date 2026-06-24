@@ -1,5 +1,6 @@
 import { defineSandbox } from "eve/sandbox";
 import { docker } from "eve/sandbox/docker";
+import { MOVIES_CSV } from "./movies";
 
 // Code isolation without Vercel Sandbox.
 //
@@ -22,4 +23,15 @@ export default defineSandbox({
     pullPolicy: "if-not-present",
     networkPolicy: "deny-all",
   }),
+
+  // Seed a small, recognizable movie database into the sandbox at the start of
+  // every session, so the agent has real data to analyze immediately (no need
+  // to ask the user to upload anything). The agent reads /workspace/movies.csv.
+  async onSession({ use }) {
+    const session = await use();
+    await session.writeTextFile({
+      path: "movies.csv",
+      content: MOVIES_CSV,
+    });
+  },
 });
