@@ -50,6 +50,6 @@ postgres_host_port: 5544
 # the app over plain HTTP on :80 (good for smoke-testing by IP). Once you set
 # a real domain (with an A record -> droplet IP) and re-run deploy.yml, Caddy
 # provisions a Let's Encrypt certificate automatically.
-domain: ""
+domain: "eve.phil.bingo"
 # Email used for the Let's Encrypt ACME account (recommended once domain set).
-acme_email: ""
+acme_email: "phil.zona@vercel.com"
