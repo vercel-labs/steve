@@ -148,6 +148,83 @@ Legend: [+] delight / good design  ·  [~] friction / surprise  ·  [!] sharp ed
 
 ---
 
+## VPS deployment (DigitalOcean + Ansible + Caddy) — follow-up
+
+Context: took the local PoC and stood it up on a real DigitalOcean droplet via
+an Ansible pipeline (provision → harden → deploy), behind Caddy with TLS. Most
+of the friction here was generic infra tooling (DO API, SSH keys, pnpm) and is
+*not* eve's fault — but a few observations are eve-specific and worth the team's
+attention. Flagging clearly which is which.
+
+### eve-specific (actionable for the team)
+
+- **[!] `eve dev --no-ui` as the production host is operationally awkward.**
+  Running the long-lived host under systemd means the unit literally invokes
+  `eve dev`. This is a recurring papercut beyond the docs issue noted above:
+  - It *looks* wrong in a `systemd` unit / runbook ("why is production running
+    the dev server?") and invites a future maintainer to "fix" it to `eve start`
+    and break the deployment.
+  - `eve dev` does more than serve (TUI affordances, watch-y behavior) that a
+    daemon doesn't want. A dedicated `eve serve`/`eve host` command — or making
+    `eve start` register the custom world's queue handler — would make the
+    production story coherent. This is the same root cause as the `eve start`
+    "Unhandled queue" bug, but it bites again the moment you write a service
+    unit. Reiterating because it's now a deployment-shaped problem, not just a
+    local-dev one.
+
+- **[~] The host needs the Docker socket, which forces a co-location decision.**
+  Because the Docker sandbox backend drives `docker run` against the host
+  daemon, the eve host process must have access to `/var/run/docker.sock` (we
+  ran it natively under systemd as a user in the `docker` group). That's fine,
+  but it's an implicit deployment constraint that isn't called out: you can't
+  cleanly containerize the eve host without docker-out-of-docker / socket
+  mounting, which has real security implications (socket access ≈ root). A short
+  "deploying the Docker sandbox in production" note — covering socket access,
+  the `docker` group, and why the host can't be a vanilla unprivileged container
+  — would save people from discovering this architecturally late.
+
+- **[+] The build/runtime artifact is genuinely portable.** Nothing about the
+  deploy needed eve's cooperation beyond "run this command with these env vars."
+  `git clone` → `pnpm install` → systemd `eve dev --no-ui --host 127.0.0.1`
+  behind any reverse proxy. No platform hooks, no `.vercel/output`, no special
+  adapter. The no-Vercel thesis holds up under a real deploy, not just locally.
+
+- **[+] `/eve/v1/health` is exactly what a reverse proxy / orchestrator wants.**
+  Unauthenticated, returns `{"ok":true,"status":"ready",...}`, and made Caddy +
+  the Ansible post-deploy readiness check trivial. Good that it's distinct from
+  the authed routes.
+
+- **[~] Reverse proxy: proxy the WHOLE origin, not just `/eve/v1/*`.** We bind
+  eve to `127.0.0.1:3000` and make Caddy the only public entry, forwarding all
+  paths. Beyond the public API, eve serves an internal durable-dispatch route at
+  `/.well-known/workflow/v1/flow` (confirmed live — it 400s an empty POST, i.e.
+  it's a real handler, not a 404). In our setup the queue callback is in-process
+  to localhost, so it doesn't strictly traverse the proxy — but anyone who
+  restricts the proxy to `/eve/` (a natural instinct) risks breaking dispatch or
+  webhooks. A one-line "proxy the entire origin" note in the deployment docs,
+  plus a list of the non-`/eve/` paths eve exposes (`/.well-known/...`, channel
+  webhooks), would prevent a subtle, runs-don't-advance class of bug.
+
+### not eve's fault, but useful field notes (toolchain, for completeness)
+
+- **[~] pnpm 11's supply-chain policy fights pinned beta versions.** This PoC
+  pins exact, sometimes <24h-old beta versions on purpose (it has to, per the
+  world/core matching constraint above). pnpm 11 then refuses the lockfile with
+  `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` and also blocks dependency build
+  scripts (`ERR_PNPM_IGNORED_BUILDS`), and the release-age check re-runs on the
+  implicit deps-status check that `pnpm exec` performs — so it bites `install`,
+  the migration CLI, *and* the host process. We had to set
+  `PNPM_CONFIG_MINIMUM_RELEASE_AGE=0` + `PNPM_CONFIG_DANGEROUSLY_ALLOW_ALL_BUILDS=true`
+  across install, migrate, and the systemd unit. Indirectly an eve concern: the
+  "you must pin a fresh beta world version" requirement collides with default
+  supply-chain tooling. Another nudge toward publishing a stable, appropriately
+  aged `@workflow/world-postgres` line that matches eve's core.
+
+- **[info] DigitalOcean's Ansible module didn't reliably attach the SSH key**
+  (left root with no authorized key); we create the droplet via the raw DO API
+  instead. Pure infra, no eve relevance — noted only so the deploy code's choice
+  isn't mistaken for an eve workaround.
+
 ## Suggestions (high-leverage, in priority order)
 
 1. **Compat check the configured world's `@workflow/world` against eve's
@@ -162,6 +239,13 @@ Legend: [+] delight / good design  ·  [~] friction / surprise  ·  [!] sharp ed
    so nobody adds redundant wiring.
 5. **A `workflow-postgres-setup --reset`** (or clearer recovery guidance) for
    version migrations.
+6. **Ship a production host command (`eve serve`/`eve host`)** — or fix
+   `eve start` for custom worlds — so the systemd/daemon story doesn't depend on
+   `eve dev`. (Surfaced again, harder, at deploy time.)
+7. **Add a "deploying the Docker sandbox" doc section** covering the Docker
+   socket requirement, the `docker` group, why the host can't be a vanilla
+   unprivileged container, and the "proxy the whole origin (incl.
+   `/.well-known/workflow/v1/flow`), not just `/eve/v1/*`" reverse-proxy gotcha.
 
 ## Bottom line
 
@@ -172,3 +256,11 @@ headline. The friction was almost entirely in the *self-host wiring* of the
 beta Workflow world: version matching, queue namespace, and the dev-vs-start
 host path. None are conceptual problems; all are surfaceable with a couple of
 startup checks and a few doc lines. For a beta, the foundation is strong.
+
+Taking it to a real VPS reinforced this: the artifact is genuinely portable and
+deployed behind Caddy/TLS with no eve-specific cooperation, and `/eve/v1/health`
+made orchestration easy. The two things that resurfaced as *deployment*-shaped
+problems (rather than local-dev quirks) are the `eve dev`-as-production-host
+awkwardness and the undocumented Docker-socket / proxy-the-whole-origin
+requirements of the Docker sandbox. Both are doc-and-one-command fixes, not
+design flaws.
