@@ -14,12 +14,13 @@ do_api_token: "{{ lookup('env', 'DO_API_TOKEN') }}"
 local_env_file: "{{ playbook_dir }}/../.env"
 
 # --- DigitalOcean droplet (provision.yml) ---------------------------------
-# Minimal-but-realistic PoC sizing. 1GB droplets OOM during `pnpm install` +
-# build with Node 24 while Postgres and sandbox containers also run, so the
-# smallest reliable size is the 2GB shared-CPU plan.
+# Sizing: the agent + Postgres + Docker sandbox + a Next.js production build
+# (`next build` needs ~1.5GB) coexist on this box. 2GB OOMs/struggles during
+# the Next build; 4GB is comfortable. The frontend role also adds a swapfile as
+# a safety margin. Bump higher (s-4vcpu-8gb) if you add more services.
 do_droplet_name: "steve-poc"
 do_region: "nyc3"
-do_size: "s-2vcpu-2gb"
+do_size: "s-2vcpu-4gb"
 do_image: "ubuntu-24-04-x64"
 # Name under which your local public key is uploaded to DigitalOcean so the
 # first root login works (key-only). Must be unique within your DO account.
@@ -63,6 +64,8 @@ postgres_host_port: 5544
 # EVE_NEXT_PRODUCTION_ORIGIN, so one domain serves both the UI and the agent API.
 web_port: 3001
 web_eve_origin: "http://127.0.0.1:{{ app_port }}"
+# `next build` OOMs on the 2GB droplet without swap; the frontend role adds this.
+swapfile_path: "/swapfile"
 
 # --- Monitoring (Beszel) --------------------------------------------------
 # Beszel hub (dashboard) + agent run on this droplet via Docker. The hub is

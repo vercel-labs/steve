@@ -22,6 +22,11 @@ Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # `pnpm exec` runs (the PoC pins day-old beta versions on purpose).
 Environment=PNPM_CONFIG_MINIMUM_RELEASE_AGE=0
 Environment=PNPM_CONFIG_DANGEROUSLY_ALLOW_ALL_BUILDS=true
+# Ensure the Postgres world container is up and accepting connections before
+# the agent starts. On reboot the agent would otherwise race the Docker
+# container and die with ECONNREFUSED to Postgres.
+ExecStartPre=/usr/bin/docker compose -f {{ app_dir }}/docker-compose.yml up -d postgres
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do docker exec steve-postgres pg_isready -U world -d world && exit 0; sleep 2; done; echo "postgres not ready" >&2; exit 1'
 # Bind to localhost only; Caddy is the sole public entry point.
 ExecStart=/usr/bin/pnpm exec eve dev --no-ui --host 127.0.0.1 --port {{ app_port }} --logs all
 Restart=always

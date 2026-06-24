@@ -6,6 +6,49 @@
 # Topology: Caddy ({{ domain }}) -> Next ({{ web_port }}) -> /eve/v1/* proxied
 # to the local agent ({{ web_eve_origin }}) via EVE_NEXT_PRODUCTION_ORIGIN.
 
+# `next build` needs ~1.5GB; the 2GB droplet (Postgres + agent + Docker) has
+# too little free RAM and no swap, so the build OOMs. Add a swapfile first
+# (idempotent) to give the build headroom.
+- name: Check whether swap is already active
+  ansible.builtin.command: swapon --noheadings --show=NAME
+  register: active_swaps
+  changed_when: false
+  become: true
+
+- name: Set up the swapfile
+  when: swapfile_path not in active_swaps.stdout
+  become: true
+  block:
+    - name: Create a 2G swapfile if absent
+      ansible.builtin.command:
+        cmd: "fallocate -l 2G {{ swapfile_path }}"
+        creates: "{{ swapfile_path }}"
+
+    - name: Secure the swapfile
+      ansible.builtin.file:
+        path: "{{ swapfile_path }}"
+        mode: "0600"
+
+    - name: Format the swapfile
+      ansible.builtin.command:
+        cmd: "mkswap {{ swapfile_path }}"
+      register: mkswap
+      changed_when: "'Setting up swapspace' in mkswap.stdout"
+
+    - name: Enable the swapfile
+      ansible.builtin.command:
+        cmd: "swapon {{ swapfile_path }}"
+      changed_when: true
+
+- name: Persist swap in fstab
+  ansible.posix.mount:
+    path: none
+    src: "{{ swapfile_path }}"
+    fstype: swap
+    opts: sw
+    state: present
+  become: true
+
 - name: Build the Next.js app
   ansible.builtin.command:
     cmd: pnpm build

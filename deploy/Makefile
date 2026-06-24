@@ -15,7 +15,7 @@ EXTRA          := $(if $(REF),-e git_ref=$(REF),)
 
 export ANSIBLE_COLLECTIONS_PATH := $(COLLECTIONS_DIR)
 
-.PHONY: help deps provision bootstrap deploy redeploy all ssh status logs check destroy-hint
+.PHONY: help deps provision bootstrap deploy redeploy all ssh status logs web-logs check destroy-hint
 
 help:
 	@echo "Targets:"
@@ -26,8 +26,9 @@ help:
 	@echo "  make all         provision -> bootstrap -> deploy"
 	@echo "  make check       Syntax-check all playbooks"
 	@echo "  make ssh         SSH into the droplet as the deploy user"
-	@echo "  make status      Show the steve service status on the droplet"
-	@echo "  make logs        Tail the steve service logs on the droplet"
+	@echo "  make status      Show service + container status on the droplet"
+	@echo "  make logs        Tail the steve (agent) logs on the droplet"
+	@echo "  make web-logs    Tail the steve-web (UI) logs on the droplet"
 	@echo "  make destroy-hint  How to tear the droplet down"
 
 deps:
@@ -61,11 +62,15 @@ ssh:
 
 status:
 	@test -n "$(IP)" || { echo "No droplet IP. Run 'make provision' first."; exit 1; }
-	ssh deploy@$(IP) 'systemctl status steve --no-pager'
+	ssh deploy@$(IP) 'systemctl status steve steve-web --no-pager; echo; docker ps --format "table {{.Names}}\t{{.Status}}"'
 
 logs:
 	@test -n "$(IP)" || { echo "No droplet IP. Run 'make provision' first."; exit 1; }
 	ssh deploy@$(IP) 'journalctl -u steve -f'
+
+web-logs:
+	@test -n "$(IP)" || { echo "No droplet IP. Run 'make provision' first."; exit 1; }
+	ssh deploy@$(IP) 'journalctl -u steve-web -f'
 
 destroy-hint:
 	@echo "Destroy the droplet from the DigitalOcean dashboard, or set"

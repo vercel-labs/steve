@@ -1,32 +1,49 @@
 # Deploying steve to a DigitalOcean droplet (Ansible)
 
-Provisions a droplet, hardens it, and runs the self-hosted `eve` agent behind
-Caddy — with **zero Vercel infrastructure**, on independent hardware. The agent
-runs natively under `systemd`; Postgres (the durable Workflow world) runs in
-Docker; Caddy terminates TLS and injects `x-hosted-on-vercel: false` on every
-response.
+Provisions a droplet, hardens it, and runs the self-hosted `eve` agent, a
+Next.js UI, and Beszel monitoring behind Caddy — with **zero Vercel
+infrastructure**, on independent hardware. The agent and UI run natively under
+`systemd`; Postgres (the durable Workflow world) and Beszel run in Docker; Caddy
+terminates TLS and injects `x-hosted-on-vercel: false` on every response.
 
 ```
 你 (laptop)  --ssh-->  droplet
-                         ├─ caddy            :80/:443  (public, TLS, header inject)
-                         │     └─ reverse_proxy 127.0.0.1:3000
-                         ├─ steve.service    eve dev --no-ui  (127.0.0.1:3000)
-                         │     └─ spawns sandbox containers via the Docker socket
-                         └─ docker: steve-postgres  (127.0.0.1:5544)
+   caddy  :80/:443  (public, TLS, header inject)
+     ├─ eve.phil.bingo
+     │     ├─ /eve/*, /.well-known/workflow/*  -> steve     (127.0.0.1:3000)
+     │     └─ everything else (the UI)         -> steve-web (127.0.0.1:3001)
+     └─ status.eve.phil.bingo                  -> beszel-hub (127.0.0.1:8090)
+
+   steve.service       eve dev --no-ui   (127.0.0.1:3000)  [spawns sandboxes via Docker socket]
+   steve-web.service   next start        (127.0.0.1:3001)  [withEve + useEveAgent UI]
+   docker: steve-postgres (127.0.0.1:5544), beszel-hub, beszel-agent
 ```
 
 ## Why these choices
 
-- **Native + systemd** for the eve host: it needs the Docker socket to spawn
-  sandbox containers anyway, so running it natively (rather than in a container
-  that mounts the socket) is simpler and matches the verified local setup.
+- **Native + systemd** for the eve host and the Next UI: the agent needs the
+  Docker socket to spawn sandbox containers, so running it natively (rather than
+  in a container that mounts the socket) is simpler and matches the verified
+  local setup.
 - **`eve dev --no-ui`, not `eve start`**: in eve 0.13.3 only the dev host
   registers the custom Postgres world's queue handler. See `_internal/ISSUES.md`.
-- **Caddy proxies all paths** (not just `/eve/v1/*`) so eve's internal
-  `/.well-known/workflow/v1/flow` queue callback keeps working.
-- **Droplet size `s-2vcpu-2gb`**: the smallest size that reliably runs
-  `pnpm install` + build with Node 24 alongside Postgres and sandbox containers
-  without OOM. (1GB droplets fail during install.)
+- **Caddy path-routes the eve API straight to the agent**, and everything else
+  to the Next UI. We deliberately do *not* use `withEve`'s production rewrite
+  (`EVE_NEXT_PRODUCTION_ORIGIN`) to forward `/eve/v1/*`: that rewrite assumes the
+  agent is mounted under its Vercel `servicePrefix` (`/_eve_internal/eve`) and
+  double-prefixes the path when the agent runs as a separate origin serving at
+  `/eve/v1`. `useEveAgent` calls same-origin `/eve/v1/*`, so Caddy path routing
+  is transparent to the browser and avoids the rewrite entirely. (The eve
+  internal `/.well-known/workflow/*` callback is routed to the agent too.)
+- **Droplet size `s-2vcpu-4gb`**: the agent + Postgres + Docker sandbox + a
+  Next.js production build (`next build` needs ~1.5GB) coexist; 2GB OOMs/struggles
+  during the build, 4GB is comfortable. The frontend role also adds a 2G swapfile
+  as a safety margin. Resize anytime via the DO dashboard/API (power off →
+  resize RAM → power on); the agent unit waits for Postgres on reboot.
+- **Agent is public (`none()` auth) for the PoC** so the UI works without
+  credentials. Lock it down by switching `agent/channels/eve.ts` back to
+  `[localDev(), httpBasic({...})]` (and front the UI with an auth-injecting
+  route). See `_internal/DX_NOTES.md` for the auth trade-offs.
 
 ## Prerequisites (on your machine)
 
@@ -102,29 +119,43 @@ droplet and pauses, printing the public key with a link
 "Allow write access" unchecked), press ENTER, and the play continues: clone →
 copy `.env` → `pnpm install` → Postgres up → migrate → systemd service → Caddy.
 
-At this point the app is reachable over **plain HTTP by IP** (no domain yet):
+At this point the site is reachable over **plain HTTP by IP** (no domain yet):
 
 ```bash
-curl -u admin:<password> http://<droplet-ip>/eve/v1/health
-curl -I http://<droplet-ip>/eve/v1/health   # -> x-hosted-on-vercel: false
+curl http://<droplet-ip>/                    # the Next.js UI
+curl http://<droplet-ip>/eve/v1/health       # the agent API (use GET, not HEAD)
+curl -I http://<droplet-ip>/                 # -> x-hosted-on-vercel: false
 ```
+
+> Use `GET` for `/eve/v1/health`; eve 404s `HEAD` requests (so `curl -I` against
+> the health path shows 404 even when healthy). See `_internal/DX_NOTES.md`.
 
 ## 5. Add your domain (when ready)
 
-1. Create a DNS **A record** for your domain pointing at the droplet IP.
+1. Create DNS **A records** pointing at the droplet IP:
+   - your app domain (e.g. `eve.phil.bingo`)
+   - the monitoring subdomain (e.g. `status.eve.phil.bingo`), if you want the
+     Beszel dashboard exposed.
 2. Set in `group_vars/all.yml`:
    ```yaml
-   domain: "agent.example.com"
+   domain: "eve.phil.bingo"
+   monitoring_domain: "status.eve.phil.bingo"   # or "" to keep Beszel private
    acme_email: "you@example.com"
    ```
-3. Re-run the deploy — Caddy provisions a Let's Encrypt cert automatically:
+3. Re-run the deploy — Caddy provisions Let's Encrypt certs automatically:
    ```bash
    ansible-playbook deploy.yml
    ```
    ```bash
-   curl -u admin:<password> https://agent.example.com/eve/v1/health
-   curl -I https://agent.example.com/eve/v1/health   # x-hosted-on-vercel: false
+   curl https://eve.phil.bingo/                 # UI
+   curl https://eve.phil.bingo/eve/v1/health    # agent API
+   curl -I https://eve.phil.bingo/              # x-hosted-on-vercel: false
    ```
+4. **Beszel first run:** open `https://status.eve.phil.bingo/`, create the admin
+   account, then **Add System** with host `127.0.0.1` and port `45876`. The hub
+   shows a public key to authorize; paste it into `group_vars/all.yml` as
+   `beszel_agent_key` and re-run deploy (or complete the add-system flow in the
+   hub, which writes the key to the agent on connect).
 
 ## Redeploying new changes
 
@@ -142,8 +173,10 @@ ansible-playbook deploy.yml -e git_ref=my-feature-branch
 
 ```bash
 ssh deploy@<droplet-ip>
-systemctl status steve            # service state
-journalctl -u steve -f            # live logs
+systemctl status steve steve-web  # agent + UI service state
+journalctl -u steve -f            # agent logs
+journalctl -u steve-web -f        # UI logs
+docker ps                         # postgres, beszel-hub, beszel-agent, sandboxes
 cd /opt/steve && pnpm exec workflow inspect runs --backend @workflow/world-postgres
 sudo ufw status                   # firewall (22/80/443 only)
 ```
@@ -155,11 +188,13 @@ sudo ufw status                   # firewall (22/80/443 only)
 | `provision.yml` | create the droplet via the DO API, write `inventory.ini` |
 | `bootstrap.yml` | one-time hardening (root) |
 | `deploy.yml` | deploy / redeploy (deploy user) |
-| `group_vars/all.yml` | config (size, region, domain, versions, env paths) |
+| `group_vars/all.yml` | config (size, region, domain, ports, versions, env paths) |
 | `roles/hardening` | deploy user, SSH lockdown, ufw, fail2ban, auto-upgrades |
 | `roles/docker` | Docker Engine + compose plugin |
-| `roles/app` | Node 24/pnpm, deploy key, clone, `.env`, Postgres, migrate, systemd |
-| `roles/caddy` | reverse proxy, TLS, `x-hosted-on-vercel: false` header |
+| `roles/app` | Node 24/pnpm, deploy key, clone, `.env`, Postgres, migrate, agent systemd |
+| `roles/frontend` | swapfile, `next build`, `steve-web` systemd unit (the public UI) |
+| `roles/monitoring` | Beszel hub + agent via Docker Compose |
+| `roles/caddy` | reverse proxy, TLS, path routing, `x-hosted-on-vercel: false` header |
 
 ## Tearing down
 

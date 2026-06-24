@@ -21,7 +21,14 @@
 # --- Production: real domain with automatic Let's Encrypt TLS ---
 {{ domain }} {
 	header >X-Hosted-On-Vercel "false"
-	# Next.js is the public site; it proxies /eve/v1/* to the local agent.
+	# Route the eve API and its internal durable-dispatch callback straight to
+	# the agent; everything else (the UI) goes to Next. This avoids withEve's
+	# production rewrite, which double-prefixes paths when the agent runs as a
+	# separate origin at root (/eve/v1) rather than under its Vercel
+	# servicePrefix. useEveAgent calls same-origin /eve/v1/*, so path routing
+	# here is transparent to the browser.
+	@eve path /eve/* /.well-known/workflow/*
+	reverse_proxy @eve 127.0.0.1:{{ app_port }}
 	reverse_proxy 127.0.0.1:{{ web_port }}
 }
 
