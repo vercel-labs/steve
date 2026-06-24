@@ -241,6 +241,93 @@ attention. Flagging clearly which is which.
   instead. Pure infra, no eve relevance — noted only so the deploy code's choice
   isn't mistaken for an eve workaround.
 
+---
+
+## Frontend UI + remote auth — follow-up
+
+Context: after deploying the agent to a self-hosted origin (`https://eve.phil.bingo`,
+behind Caddy, `httpBasic()` auth), we tried to actually *use* it two ways — the
+`eve dev` REPL pointed at the remote URL, and a scaffolded Next.js UI
+(`withEve` + `useEveAgent`). Both ran into auth/bundling friction worth flagging.
+
+### Remote REPL can't authenticate to a self-hosted, auth-protected host
+
+- **[!] `eve dev <remote-url>` only supports anonymous or Vercel-OIDC auth.**
+  Running `eve dev https://eve.phil.bingo` connects, then every turn fails with
+  `Authorization is required for this route.` The REPL has no flag to pass HTTP
+  Basic (or bearer) credentials. Reading the compiled client confirms the
+  asymmetry:
+  - The underlying `Client` (`eve/client`) fully supports
+    `auth: { basic | bearer | vercelOidc }` and emits the right `Authorization`
+    header.
+  - But the dev-client path hardcodes anonymous options:
+    `resolveDevelopmentClientOptions(url) => ({ host: url })`, and the only
+    credentialed remote path is Vercel OIDC
+    (`resolveRemoteDevelopmentClientOptions` → `auth: { vercelOidc }`).
+    `client-options.d.ts` even documents the intent: *"remote URLs receive no
+    ambient credentials."*
+  - It also ignores URL userinfo (`https://user:pass@host` is not honored).
+
+  Net: a **self-hosted, non-Vercel, auth-protected** deployment — exactly the
+  shape this whole PoC is about — is the one configuration the remote REPL can't
+  talk to. For a framework whose pitch includes "not coupled to Vercel," the
+  remote dev tooling assuming Vercel OIDC for auth is a notable gap.
+
+  Suggestion: add `eve dev --header`, `--basic user:pass`, or `--bearer <token>`
+  (or honor `EVE_DEV_AUTH_*` / URL userinfo) so the TUI can drive a protected
+  self-hosted host. The `Client` already does the work; only the dev wrapper
+  needs to surface it.
+
+### `eve/react` breaks the Next.js client build under Turbopack
+
+- **[!] `next build` fails: `node:module` pulled into the client chunk via
+  `eve/react`.** A `"use client"` component importing `useEveAgent` from
+  `eve/react` makes Turbopack fail with
+  `the chunking context (unknown) does not support external modules
+  (request: node:module)` during `EcmascriptModuleContent::new_merged`. We
+  statically walked the entire `eve/react` client import graph (21 files) — none
+  of it imports `node:module`; the reference is introduced by Turbopack's
+  module-*merging*, not by eve's client source. Next 16 forces Turbopack for
+  `next build` (no webpack fallback), so it can't simply be bundler-switched.
+  This is the documented, supported integration (`guides/frontend/nextjs.mdx`:
+  `withEve` + `useEveAgent`), so it breaking on current Next + Turbopack is a
+  real regression for anyone scaffolding a UI today.
+
+  Workaround (config-only, no component changes): alias the builtin to a
+  browser stub in `next.config.ts`:
+  ```ts
+  turbopack: { resolveAlias: { "node:module": "./lib/node-module-stub.js" } }
+  ```
+  This unblocked the build cleanly. But it's a guess-and-stub hack; eve should
+  ensure `eve/react` (and whatever the merge step drags in) is client-safe, or
+  ship a dedicated client-only entry that never references Node builtins.
+
+### Auth model mismatch between "self-host" and "frontend" guidance
+
+- **[~] The supported UI auth story assumes Vercel or cookies; self-hosted
+  Basic auth has no first-class path.** `guides/frontend/nextjs.mdx` says
+  `withEve` makes eve routes same-origin so cookie auth "just works," and points
+  non-cookie schemes at `useEveAgent({ headers })`. But our deployment uses
+  `httpBasic()` on a *separate* origin proxied via `EVE_NEXT_PRODUCTION_ORIGIN`,
+  and eve's Next proxy rewrite does not inject upstream credentials. So the
+  realistic options collapse to: (a) make the agent **public** (`none()`), (b)
+  re-architect to put the UI on the same origin as the agent so a cookie/session
+  applies, or (c) hand-roll an auth-injecting Next route in front of the proxy.
+  For a PoC we chose (a) — switched the channel to `none()` and redeployed —
+  which is fine for a demo but means "usable UI" and "protected agent" are
+  effectively mutually exclusive without extra plumbing.
+
+  Suggestion: document (and ideally support) a self-hosted, separate-origin,
+  Basic/bearer-protected topology end to end — e.g. an `EVE_NEXT_PRODUCTION_*`
+  way to attach an upstream Authorization header on the rewrite, mirroring what
+  `Client` already supports. Today the easy paths are Vercel OIDC, same-origin
+  cookies, or "make it public."
+
+- **[+] `none()` is a clean escape hatch.** Switching `agent/channels/eve.ts` to
+  `eveChannel({ auth: [none()] })` and redeploying made the routes public in one
+  line — exactly what a demo wants, and clearly named so it can't be set by
+  accident. Good that it exists and is explicit.
+
 ## Suggestions (high-leverage, in priority order)
 
 1. **Compat check the configured world's `@workflow/world` against eve's
@@ -265,6 +352,18 @@ attention. Flagging clearly which is which.
 8. **Handle HTTP `HEAD` on `/eve/v1/health`** (ideally derive HEAD from GET
    across the router). Today HEAD 404s, so HEAD-based health/uptime probes
    (LBs, k8s, monitoring services) mark a healthy deployment as down.
+9. **Let the remote dev REPL authenticate with non-Vercel schemes**
+   (`eve dev --basic/--bearer/--header`, or honor URL userinfo / `EVE_DEV_AUTH_*`).
+   Today `eve dev <remote-url>` can only go anonymous or Vercel-OIDC, so it
+   can't drive a self-hosted, auth-protected host — the core self-host shape.
+10. **Fix `eve/react` for the Next 16 + Turbopack client build** (`node:module`
+    gets merged into the client chunk) and/or ship a guaranteed client-safe
+    entry. The documented `withEve` + `useEveAgent` path currently fails
+    `next build` out of the box.
+11. **Document a self-hosted, separate-origin, Basic/bearer-protected UI
+    topology** — e.g. attach an upstream Authorization header on the
+    `EVE_NEXT_PRODUCTION_ORIGIN` rewrite. Today protected-agent + usable-UI
+    requires hand-rolled plumbing or going public.
 
 ## Bottom line
 
