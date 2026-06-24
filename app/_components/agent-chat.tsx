@@ -25,11 +25,9 @@ const MONITORING_HREF = "https://status.eve.phil.bingo";
 // skills (lookup, rank, aggregate, derive, chart) so a first-time visitor can
 // validate the answers by eye.
 const SUGGESTIONS = [
-  "What can you do?",
   "Top 5 movies by box office — and chart it",
   "Which director has the highest average rating?",
   "Most profitable film relative to its budget",
-  "Average box office by decade",
 ] as const;
 
 type AgentStatus = ReturnType<typeof useEveAgent>["status"];
@@ -62,28 +60,6 @@ function Pill({
     <span className={className} title={title}>
       {children}
     </span>
-  );
-}
-
-// The thesis, made visible: this agent is self-hosted (no Vercel) and the model
-// writes/runs Python in an isolated sandbox even though the agent itself is
-// TypeScript (eve). Surfaced so viewers don't assume "Vercel == TypeScript-only".
-function ThesisBadges() {
-  return (
-    <div className="flex flex-wrap items-center justify-center gap-2">
-      <Pill title="No Vercel infrastructure — runs on an independent DigitalOcean droplet. Caddy injects x-hosted-on-vercel: false on every response.">
-        Self-hosted · not on Vercel
-      </Pill>
-      <Pill title="The eve agent is TypeScript; the model writes and executes Python inside an isolated Docker sandbox on each run.">
-        TypeScript agent · runs Python in a sandbox
-      </Pill>
-      <Pill
-        href={MONITORING_HREF}
-        title="Live host & Docker metrics for the droplet (Beszel)."
-      >
-        Live metrics ↗
-      </Pill>
-    </div>
   );
 }
 
@@ -171,24 +147,20 @@ export function AgentChat() {
       >
         {isEmpty ? (
           <div className="flex flex-col items-center gap-4 text-center">
-            <h1 className="font-medium text-5xl tracking-tighter">
+            <h1 className="font-medium text-5xl" style={{ letterSpacing: "0.02em" }}>
               <span className="text-muted-foreground/50">st</span>
               <span className="text-foreground">eve</span>
             </h1>
-            <p className="max-w-md text-balance text-muted-foreground text-sm">
-              A movie-database analyst on Vercel&apos;s eve framework — running with
-              zero Vercel infrastructure. Ask about ~40 well-known films; it writes
-              Python over the data in an isolated sandbox and charts the answer.
+            <p className="max-w-sm text-balance text-muted-foreground text-sm">
+              A self-hosted movie-database analyst. Ask about ~40 films — it runs
+              Python in a sandbox and charts the answer.
             </p>
-            <ThesisBadges />
-            <a
-              className="rounded-full border border-amber-500/30 px-2 py-0.5 font-medium text-amber-700 text-xs transition-colors hover:bg-amber-500/10 dark:text-amber-300"
-              href={BETA_TERMS_HREF}
-              rel="noreferrer"
-              target="_blank"
+            <Pill
+              href={MONITORING_HREF}
+              title="Live host & Docker metrics for the droplet (Beszel)."
             >
-              Public preview
-            </a>
+              Live metrics ↗
+            </Pill>
           </div>
         ) : null}
         <div className="w-full">{composer}</div>
