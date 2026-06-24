@@ -1,0 +1,33 @@
+# Managed by Ansible (monitoring role).
+# Beszel hub (dashboard) + agent, monitoring this droplet.
+#
+# First-run handshake: after the stack is up, open the hub at
+# https://{{ monitoring_domain }}, create your admin account, then "Add System"
+# with host 127.0.0.1 and port {{ beszel_agent_port }}. The hub will show the
+# public key to authorize; paste it into deploy/group_vars/all.yml as
+# `beszel_agent_key` and re-run deploy (or set it in the hub's add-system flow,
+# which writes it to the agent on connect). See deploy/README.md.
+services:
+  beszel:
+    image: henrygd/beszel:latest
+    container_name: beszel-hub
+    restart: unless-stopped
+    # Hub UI bound to localhost; Caddy terminates TLS and proxies to it.
+    ports:
+      - "127.0.0.1:{{ beszel_hub_port }}:8090"
+    volumes:
+      - ./hub_data:/beszel_data
+
+  beszel-agent:
+    image: henrygd/beszel-agent:latest
+    container_name: beszel-agent
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      LISTEN: "{{ beszel_agent_port }}"
+{% if beszel_agent_key | default('') | length > 0 %}
+      KEY: "{{ beszel_agent_key }}"
+{% endif %}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./agent_data:/var/lib/beszel-agent

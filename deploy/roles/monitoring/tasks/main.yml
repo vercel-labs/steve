@@ -1,0 +1,40 @@
+---
+# Stand up Beszel (hub + agent) via Docker Compose to monitor this droplet.
+# Docker is already installed by the `docker` role.
+
+- name: Create the Beszel directory
+  ansible.builtin.file:
+    path: "{{ monitoring_dir }}"
+    state: directory
+    owner: "{{ app_user }}"
+    group: "{{ app_user }}"
+    mode: "0755"
+  become: true
+
+- name: Render the Beszel docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ monitoring_dir }}/docker-compose.yml"
+    owner: "{{ app_user }}"
+    group: "{{ app_user }}"
+    mode: "0644"
+  become: true
+  register: beszel_compose
+
+- name: Start Beszel (hub + agent)
+  ansible.builtin.command:
+    cmd: docker compose up -d
+    chdir: "{{ monitoring_dir }}"
+  become: true
+  become_user: "{{ app_user }}"
+  register: beszel_up
+  changed_when: "'Started' in beszel_up.stderr or 'Created' in beszel_up.stderr or beszel_compose is changed"
+
+- name: Wait for the Beszel hub to answer on localhost
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ beszel_hub_port }}/"
+    status_code: [200, 301, 302, 404]
+  register: beszel_health
+  retries: 20
+  delay: 3
+  until: beszel_health.status in [200, 301, 302, 404]

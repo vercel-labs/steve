@@ -41,9 +41,37 @@ git_ref: "origin/main"
 node_major: "24"
 pnpm_version: "10.33.2"
 
+# Environment applied to every pnpm invocation (install, migrate, build, host).
+# This PoC pins exact, sometimes day-old beta versions on purpose; pnpm 11's
+# default supply-chain policies would otherwise reject the lockfile (minimum
+# release age) and block dependency build scripts. These PNPM_CONFIG_* vars are
+# honored by every pnpm command, including the implicit deps-status check that
+# `pnpm exec` runs.
+pnpm_env:
+  HOME: "/home/{{ app_user }}"
+  PNPM_CONFIG_MINIMUM_RELEASE_AGE: "0"
+  PNPM_CONFIG_DANGEROUSLY_ALLOW_ALL_BUILDS: "true"
+
+# The eve agent host (eve dev --no-ui), bound to localhost.
 app_port: 3000
 # Postgres is published on this host port by docker-compose.yml (5544:5432).
 postgres_host_port: 5544
+
+# --- Frontend (Next.js UI) ------------------------------------------------
+# The Next app (withEve + useEveAgent) runs `next start` on localhost and is the
+# PUBLIC site. It proxies /eve/v1/* to the local agent via
+# EVE_NEXT_PRODUCTION_ORIGIN, so one domain serves both the UI and the agent API.
+web_port: 3001
+web_eve_origin: "http://127.0.0.1:{{ app_port }}"
+
+# --- Monitoring (Beszel) --------------------------------------------------
+# Beszel hub (dashboard) + agent run on this droplet via Docker. The hub is
+# exposed at monitoring_domain with TLS; it has its own login.
+monitoring_enabled: true
+monitoring_dir: "/opt/beszel"
+beszel_hub_port: 8090
+# Port the Beszel agent listens on for the hub (loopback only).
+beszel_agent_port: 45876
 
 # --- Reverse proxy / TLS (caddy) ------------------------------------------
 # Leave empty until DNS is pointed at the droplet. While empty, Caddy serves
@@ -51,5 +79,8 @@ postgres_host_port: 5544
 # a real domain (with an A record -> droplet IP) and re-run deploy.yml, Caddy
 # provisions a Let's Encrypt certificate automatically.
 domain: "eve.phil.bingo"
+# Monitoring dashboard subdomain (needs its own A record -> droplet IP).
+# Leave empty to skip exposing Beszel publicly (access via SSH tunnel instead).
+monitoring_domain: "status.eve.phil.bingo"
 # Email used for the Let's Encrypt ACME account (recommended once domain set).
 acme_email: "phil.zona@vercel.com"

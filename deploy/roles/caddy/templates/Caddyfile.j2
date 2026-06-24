@@ -1,10 +1,15 @@
 # Managed by Ansible (caddy role).
 #
-# Reverse proxy in front of the eve host (127.0.0.1:{{ app_port }}).
-# - Proxies ALL paths so eve's internal queue callback
-#   (/.well-known/workflow/v1/flow) and /eve/v1/* both work.
-# - Injects `x-hosted-on-vercel: false` on every response (the `header`
-#   directive applies to all responses, including proxied ones).
+# Public entry for the droplet:
+#   {{ domain | default('(IP)') }}            -> Next.js UI (127.0.0.1:{{ web_port }})
+#                                                  which proxies /eve/v1/* to the
+#                                                  local eve agent (127.0.0.1:{{ app_port }}).
+{% if monitoring_enabled | default(false) and monitoring_domain | default('') | length > 0 %}
+#   {{ monitoring_domain }}  -> Beszel monitoring hub (127.0.0.1:{{ beszel_hub_port }}).
+{% endif %}
+#
+# `header >X-Hosted-On-Vercel "false"` injects the header on every response
+# (deferred + force-replace), proving this is NOT on Vercel.
 
 {% if acme_email | default('') | length > 0 %}
 {
@@ -15,18 +20,24 @@
 {% if domain | default('') | length > 0 %}
 # --- Production: real domain with automatic Let's Encrypt TLS ---
 {{ domain }} {
-	# `>` defers and force-replaces, so the header lands on every response
-	# (including streamed/proxied ones), overriding any upstream value.
-	# Demonstrates this deployment is NOT on Vercel.
 	header >X-Hosted-On-Vercel "false"
-	reverse_proxy 127.0.0.1:{{ app_port }}
+	# Next.js is the public site; it proxies /eve/v1/* to the local agent.
+	reverse_proxy 127.0.0.1:{{ web_port }}
 }
+
+{% if monitoring_enabled | default(false) and monitoring_domain | default('') | length > 0 %}
+# --- Monitoring dashboard (Beszel) ---
+{{ monitoring_domain }} {
+	header >X-Hosted-On-Vercel "false"
+	reverse_proxy 127.0.0.1:{{ beszel_hub_port }}
+}
+{% endif %}
 {% else %}
 # --- Pre-domain: serve over plain HTTP on :80 (smoke-test by IP) ---
 # Set `domain` (and ideally `acme_email`) in group_vars/all.yml and re-run
 # deploy.yml to switch to HTTPS once DNS points at this droplet.
 :80 {
 	header >X-Hosted-On-Vercel "false"
-	reverse_proxy 127.0.0.1:{{ app_port }}
+	reverse_proxy 127.0.0.1:{{ web_port }}
 }
 {% endif %}

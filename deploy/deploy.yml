@@ -8,6 +8,13 @@
 #
 # Redeploy new code:
 #   ansible-playbook deploy.yml [-e git_ref=<branch|sha>]
+#
+# Roles, in order:
+#   docker     - Docker Engine + compose
+#   app        - clone, install, .env, Postgres, migrate, eve agent (systemd)
+#   frontend   - build Next.js UI, run `next start` (systemd), the public site
+#   monitoring - Beszel hub + agent (Docker)
+#   caddy      - TLS reverse proxy: domain -> UI, status subdomain -> Beszel
 - name: Deploy the steve eve-agent host
   hosts: steve
   remote_user: "{{ app_user }}"
@@ -17,11 +24,14 @@
     - role: docker
       become: true
     - role: app
+    - role: frontend
+    - role: monitoring
+      when: monitoring_enabled | default(false)
     - role: caddy
       become: true
 
   post_tasks:
-    - name: Wait for the eve host to answer on localhost
+    - name: Wait for the eve agent to answer on localhost
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ app_port }}/eve/v1/health"
         status_code: [200, 401]
@@ -30,13 +40,26 @@
       delay: 3
       until: health.status in [200, 401]
 
+    - name: Wait for the web UI to answer on localhost
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ web_port }}/"
+        status_code: [200]
+      register: web_up
+      retries: 20
+      delay: 3
+      until: web_up.status == 200
+
     - name: Deployment summary
       ansible.builtin.debug:
         msg:
-          - "steve is running. systemd: 'systemctl status steve'."
+          - "Agent: systemd 'steve' on 127.0.0.1:{{ app_port }} (eve dev --no-ui)."
+          - "Web UI: systemd 'steve-web' on 127.0.0.1:{{ web_port }} (next start)."
           - >-
-            {{ 'Public URL: https://' + domain + '/eve/v1/health'
+            {{ 'Public site: https://' + domain + '/'
                if (domain | default('') | length > 0)
-               else 'Public URL (pre-domain): http://' + inventory_hostname + '/eve/v1/health' }}
-          - "Auth: HTTP Basic (ROUTE_AUTH_BASIC_USER / _PASSWORD)."
+               else 'Public site (pre-domain): http://' + inventory_hostname + '/' }}
+          - >-
+            {{ ('Monitoring: https://' + monitoring_domain + '/  (Beszel; create admin on first visit)')
+               if (monitoring_enabled | default(false) and (monitoring_domain | default('') | length > 0))
+               else 'Monitoring: disabled or not exposed' }}
           - "Header check: curl -I returns 'x-hosted-on-vercel: false'."

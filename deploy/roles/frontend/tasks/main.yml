@@ -1,0 +1,47 @@
+---
+# Build and run the Next.js UI (withEve + useEveAgent) as the public site.
+# The repo is already cloned at {{ app_dir }} and dependencies installed by the
+# `app` role, so this role only builds the web app and runs `next start`.
+#
+# Topology: Caddy ({{ domain }}) -> Next ({{ web_port }}) -> /eve/v1/* proxied
+# to the local agent ({{ web_eve_origin }}) via EVE_NEXT_PRODUCTION_ORIGIN.
+
+- name: Build the Next.js app
+  ansible.builtin.command:
+    cmd: pnpm build
+    chdir: "{{ app_dir }}"
+  become: true
+  become_user: "{{ app_user }}"
+  environment: >-
+    {{ pnpm_env | combine({'EVE_NEXT_PRODUCTION_ORIGIN': web_eve_origin,
+                           'NEXT_TELEMETRY_DISABLED': '1',
+                           'NODE_OPTIONS': '--max-old-space-size=1536'}) }}
+  register: web_build
+  changed_when: true
+
+- name: Install the steve-web systemd unit
+  ansible.builtin.template:
+    src: steve-web.service.j2
+    dest: /etc/systemd/system/steve-web.service
+    mode: "0644"
+  become: true
+  notify:
+    - Reload systemd
+    - Restart steve-web
+
+- name: Enable and start the steve-web service
+  ansible.builtin.systemd:
+    name: steve-web
+    enabled: true
+    state: started
+    daemon_reload: true
+  become: true
+
+- name: Wait for the web app to answer on localhost
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ web_port }}/"
+    status_code: [200]
+  register: web_health
+  retries: 20
+  delay: 3
+  until: web_health.status == 200
