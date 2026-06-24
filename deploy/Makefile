@@ -34,7 +34,7 @@ deps:
 	ansible-galaxy collection install -r requirements.yml -p $(COLLECTIONS_DIR)
 
 provision:
-	$(ANSIBLE) provision.yml
+	$(ANSIBLE) -i localhost, provision.yml
 
 bootstrap:
 	$(ANSIBLE) bootstrap.yml

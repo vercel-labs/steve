@@ -29,10 +29,21 @@
     dest: /etc/caddy/Caddyfile
     mode: "0644"
     validate: "caddy validate --config %s --adapter caddyfile"
-  notify: Reload caddy
+  register: caddyfile
 
 - name: Enable and start Caddy
   ansible.builtin.service:
     name: caddy
     enabled: true
     state: started
+
+# Apply the rendered config immediately rather than deferring to a handler.
+# The caddy package starts with its default file_server Caddyfile; a handler
+# that only fires at the end of the play (and not at all if the play is
+# interrupted) can leave the default config serving. Reloading inline here
+# guarantees our reverse-proxy + header config is live by the end of the role.
+- name: Reload Caddy to apply the rendered config
+  ansible.builtin.service:
+    name: caddy
+    state: reloaded
+  when: caddyfile is changed

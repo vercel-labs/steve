@@ -18,6 +18,10 @@ EnvironmentFile={{ app_dir }}/.env
 Environment=HOME=/home/{{ app_user }}
 Environment=PORT={{ app_port }}
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Relax pnpm 11 supply-chain policies for the implicit deps-status check that
+# `pnpm exec` runs (the PoC pins day-old beta versions on purpose).
+Environment=PNPM_CONFIG_MINIMUM_RELEASE_AGE=0
+Environment=PNPM_CONFIG_DANGEROUSLY_ALLOW_ALL_BUILDS=true
 # Bind to localhost only; Caddy is the sole public entry point.
 ExecStart=/usr/bin/pnpm exec eve dev --no-ui --host 127.0.0.1 --port {{ app_port }} --logs all
 Restart=always

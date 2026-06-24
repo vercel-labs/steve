@@ -23,9 +23,12 @@ do_size: "s-2vcpu-2gb"
 do_image: "ubuntu-24-04-x64"
 # Name under which your local public key is uploaded to DigitalOcean so the
 # first root login works (key-only). Must be unique within your DO account.
-do_ssh_key_name: "steve-deploy-{{ lookup('env', 'USER') | default('local', true) }}"
+do_ssh_key_name: "steve-deploykey-{{ lookup('env', 'USER') | default('local', true) }}"
 # Local public key used for the initial root login and the deploy user.
-local_ssh_pubkey_path: "~/.ssh/id_ed25519.pub"
+# Uses a dedicated, passphrase-less deploy key so Ansible can authenticate
+# non-interactively (the default ~/.ssh/id_ed25519 is passphrase-protected).
+# Generate with: ssh-keygen -t ed25519 -N "" -f ~/.ssh/steve_deploy
+local_ssh_pubkey_path: "~/.ssh/steve_deploy.pub"
 
 # --- App ------------------------------------------------------------------
 app_user: "deploy"

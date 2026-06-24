@@ -1,0 +1,12 @@
+---
+# Environment applied to every pnpm invocation in this role.
+#
+# This PoC pins exact, sometimes day-old beta versions on purpose. pnpm 11's
+# default supply-chain policies would otherwise reject the lockfile (minimum
+# release age) and block dependency build scripts. The PNPM_CONFIG_* env vars
+# are honored by every pnpm command, including the implicit deps-status check
+# that `pnpm exec` runs (which is why a one-off CLI flag isn't enough).
+pnpm_env:
+  HOME: "/home/{{ app_user }}"
+  PNPM_CONFIG_MINIMUM_RELEASE_AGE: "0"
+  PNPM_CONFIG_DANGEROUSLY_ALLOW_ALL_BUILDS: "true"

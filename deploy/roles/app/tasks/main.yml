@@ -104,6 +104,15 @@
   changed_when: false
 
 # --- Code ------------------------------------------------------------------
+- name: Create the app directory owned by the deploy user
+  ansible.builtin.file:
+    path: "{{ app_dir }}"
+    state: directory
+    owner: "{{ app_user }}"
+    group: "{{ app_user }}"
+    mode: "0755"
+  become: true
+
 - name: Clone / update the repository
   ansible.builtin.git:
     repo: "{{ app_repo }}"
@@ -153,8 +162,7 @@
     chdir: "{{ app_dir }}"
   become: true
   become_user: "{{ app_user }}"
-  environment:
-    HOME: "/home/{{ app_user }}"
+  environment: "{{ pnpm_env }}"
   register: pnpm_install
   changed_when: "'Already up to date' not in pnpm_install.stdout"
 
@@ -182,8 +190,7 @@
     chdir: "{{ app_dir }}"
   become: true
   become_user: "{{ app_user }}"
-  environment:
-    HOME: "/home/{{ app_user }}"
+  environment: "{{ pnpm_env }}"
   changed_when: false
 
 # --- systemd service ------------------------------------------------------

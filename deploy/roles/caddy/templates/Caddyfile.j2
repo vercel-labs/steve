@@ -15,12 +15,10 @@
 {% if domain | default('') | length > 0 %}
 # --- Production: real domain with automatic Let's Encrypt TLS ---
 {{ domain }} {
-	header {
-		# Strip any upstream value, then assert false. Demonstrates this
-		# deployment is NOT on Vercel.
-		-X-Hosted-On-Vercel
-		X-Hosted-On-Vercel "false"
-	}
+	# `>` defers and force-replaces, so the header lands on every response
+	# (including streamed/proxied ones), overriding any upstream value.
+	# Demonstrates this deployment is NOT on Vercel.
+	header >X-Hosted-On-Vercel "false"
 	reverse_proxy 127.0.0.1:{{ app_port }}
 }
 {% else %}
@@ -28,10 +26,7 @@
 # Set `domain` (and ideally `acme_email`) in group_vars/all.yml and re-run
 # deploy.yml to switch to HTTPS once DNS points at this droplet.
 :80 {
-	header {
-		-X-Hosted-On-Vercel
-		X-Hosted-On-Vercel "false"
-	}
+	header >X-Hosted-On-Vercel "false"
 	reverse_proxy 127.0.0.1:{{ app_port }}
 }
 {% endif %}
