@@ -2,6 +2,7 @@
 
 import { useEveAgent } from "eve/react";
 import { AlertCircleIcon } from "lucide-react";
+import type { ReactNode } from "react";
 import {
   Conversation,
   ConversationContent,
@@ -18,8 +19,62 @@ import { AgentMessage } from "./agent-message";
 
 const AGENT_NAME = "steve";
 const BETA_TERMS_HREF = "https://vercel.com/docs/release-phases/public-beta-agreement";
+const MONITORING_HREF = "https://status.eve.phil.bingo";
 
 type AgentStatus = ReturnType<typeof useEveAgent>["status"];
+
+function Pill({
+  children,
+  href,
+  title,
+}: {
+  readonly children: ReactNode;
+  readonly href?: string;
+  readonly title?: string;
+}) {
+  const className =
+    "rounded-full border border-border bg-muted/40 px-2 py-0.5 font-medium text-muted-foreground text-xs";
+  if (href) {
+    return (
+      <a
+        className={cn(className, "transition-colors hover:bg-muted hover:text-foreground")}
+        href={href}
+        rel="noreferrer"
+        target="_blank"
+        title={title}
+      >
+        {children}
+      </a>
+    );
+  }
+  return (
+    <span className={className} title={title}>
+      {children}
+    </span>
+  );
+}
+
+// The thesis, made visible: this agent is self-hosted (no Vercel) and the model
+// writes/runs Python in an isolated sandbox even though the agent itself is
+// TypeScript (eve). Surfaced so viewers don't assume "Vercel == TypeScript-only".
+function ThesisBadges() {
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-2">
+      <Pill title="No Vercel infrastructure — runs on an independent DigitalOcean droplet. Caddy injects x-hosted-on-vercel: false on every response.">
+        Self-hosted · not on Vercel
+      </Pill>
+      <Pill title="The eve agent is TypeScript; the model writes and executes Python inside an isolated Docker sandbox on each run.">
+        TypeScript agent · runs Python in a sandbox
+      </Pill>
+      <Pill
+        href={MONITORING_HREF}
+        title="Live host & Docker metrics for the droplet (Beszel)."
+      >
+        Live metrics ↗
+      </Pill>
+    </div>
+  );
+}
 
 export function AgentChat() {
   const agent = useEveAgent();
@@ -43,10 +98,15 @@ export function AgentChat() {
   return (
     <main className="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
       {isEmpty ? null : (
-        <header className="flex h-14 shrink-0 items-center justify-center gap-3 pl-4 pr-2">
+        <header className="flex h-14 shrink-0 items-center justify-center gap-2 pl-4 pr-2">
           <span className="flex min-w-0 items-center gap-2">
             <span className="truncate text-muted-foreground text-sm">{AGENT_NAME}</span>
             <StatusDot status={agent.status} />
+          </span>
+          <span className="hidden sm:inline-flex">
+            <Pill title="No Vercel infrastructure. The TypeScript eve agent runs the model's Python in an isolated sandbox on an independent droplet.">
+              Self-hosted · TS agent + Python sandbox
+            </Pill>
           </span>
           <a
             className="rounded-full border border-amber-500/30 px-2 py-0.5 font-medium text-amber-700 text-xs transition-colors hover:bg-amber-500/10 dark:text-amber-300"
@@ -99,8 +159,14 @@ export function AgentChat() {
         )}
       >
         {isEmpty ? (
-          <div className="flex flex-col items-center gap-3 text-center">
+          <div className="flex flex-col items-center gap-4 text-center">
             <h1 className="font-medium text-5xl tracking-tighter">{AGENT_NAME}</h1>
+            <p className="max-w-md text-balance text-muted-foreground text-sm">
+              A durable data-analyst agent on Vercel&apos;s eve framework — running
+              with zero Vercel infrastructure. It writes Python, runs it in an
+              isolated sandbox, and charts the result.
+            </p>
+            <ThesisBadges />
             <a
               className="rounded-full border border-amber-500/30 px-2 py-0.5 font-medium text-amber-700 text-xs transition-colors hover:bg-amber-500/10 dark:text-amber-300"
               href={BETA_TERMS_HREF}
