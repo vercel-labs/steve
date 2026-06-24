@@ -16,8 +16,9 @@ result — each a distinct durable step, and all code runs inside the sandbox.
 
 It runs locally for the proofs below, **and** is deployed end-to-end to an
 independent DigitalOcean droplet (no Vercel) with a one-command Ansible
-pipeline. See **[What's deployed](#whats-deployed)** for the live topology and
-**[`deploy/README.md`](./deploy/README.md)** for the full runbook.
+pipeline. See **[What's deployed](#whats-deployed)** for the live topology,
+**[`deploy/README.md`](./deploy/README.md)** for the full runbook, and
+**[`DEMO.md`](./DEMO.md)** for a ~5-minute live demo script.
 
 ## What it proves
 

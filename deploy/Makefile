@@ -13,9 +13,14 @@ REF            ?=
 # Pass `make deploy REF=<git ref>` to deploy a specific branch/tag/SHA.
 EXTRA          := $(if $(REF),-e git_ref=$(REF),)
 
+# Deploy SSH key. Use IdentitiesOnly so a loaded ssh-agent (e.g. corp keys)
+# doesn't exhaust auth attempts before this key is tried.
+SSH_KEY        ?= ~/.ssh/steve_deploy
+SSH            := ssh -i $(SSH_KEY) -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new
+
 export ANSIBLE_COLLECTIONS_PATH := $(COLLECTIONS_DIR)
 
-.PHONY: help deps provision bootstrap deploy redeploy all ssh status logs web-logs check destroy-hint
+.PHONY: help deps provision bootstrap deploy redeploy all ssh status logs web-logs check demo-kill demo-restart demo-events destroy-hint
 
 help:
 	@echo "Targets:"
@@ -29,6 +34,9 @@ help:
 	@echo "  make status      Show service + container status on the droplet"
 	@echo "  make logs        Tail the steve (agent) logs on the droplet"
 	@echo "  make web-logs    Tail the steve-web (UI) logs on the droplet"
+	@echo "  make demo-kill   Kill the agent mid-run (durability demo; see DEMO.md)"
+	@echo "  make demo-events Show the durable event-log proof"
+	@echo "  make demo-restart  Restart the agent cleanly"
 	@echo "  make destroy-hint  How to tear the droplet down"
 
 deps:
@@ -58,19 +66,41 @@ IP = $(shell awk '/^\[steve\]/{getline; print $$1; exit}' inventory.ini 2>/dev/n
 
 ssh:
 	@test -n "$(IP)" || { echo "No droplet IP. Run 'make provision' first."; exit 1; }
-	ssh deploy@$(IP)
+	$(SSH) deploy@$(IP)
 
 status:
 	@test -n "$(IP)" || { echo "No droplet IP. Run 'make provision' first."; exit 1; }
-	ssh deploy@$(IP) 'systemctl status steve steve-web --no-pager; echo; docker ps --format "table {{.Names}}\t{{.Status}}"'
+	$(SSH) deploy@$(IP) 'systemctl status steve steve-web --no-pager; echo; docker ps --format "table {{.Names}}\t{{.Status}}"'
 
 logs:
 	@test -n "$(IP)" || { echo "No droplet IP. Run 'make provision' first."; exit 1; }
-	ssh deploy@$(IP) 'journalctl -u steve -f'
+	$(SSH) deploy@$(IP) 'journalctl -u steve -f'
 
 web-logs:
 	@test -n "$(IP)" || { echo "No droplet IP. Run 'make provision' first."; exit 1; }
-	ssh deploy@$(IP) 'journalctl -u steve-web -f'
+	$(SSH) deploy@$(IP) 'journalctl -u steve-web -f'
+
+# --- demo helpers (see ../DEMO.md) -----------------------------------------
+# Hard-kill the eve agent mid-run to demonstrate durable resume. systemd
+# (Restart=always) brings it right back; the in-flight run resumes from the
+# Postgres event log without re-running completed steps.
+demo-kill:
+	@test -n "$(IP)" || { echo "No droplet IP."; exit 1; }
+	@$(SSH) deploy@$(IP) 'sudo pkill -9 -f "eve dev"; true' >/dev/null 2>&1 || true
+	@echo "SIGKILLed the eve host. systemd (Restart=always) will bring it back;"
+	@echo "the in-flight run resumes from Postgres. Watch the UI, then: make demo-events"
+
+demo-restart:
+	@test -n "$(IP)" || { echo "No droplet IP."; exit 1; }
+	$(SSH) deploy@$(IP) 'sudo systemctl restart steve && echo restarted'
+
+# Show the durable event-log proof: per-type event counts + run statuses.
+# step_started == step_completed means no completed step was re-run on resume.
+demo-events:
+	@test -n "$(IP)" || { echo "No droplet IP."; exit 1; }
+	$(SSH) deploy@$(IP) 'docker exec steve-postgres psql -U world -d world \
+	  -c "select type, count(*) from workflow.workflow_events group by type order by 2 desc;" \
+	  -c "select status, count(*) from workflow.workflow_runs group by status;"'
 
 destroy-hint:
 	@echo "Destroy the droplet from the DigitalOcean dashboard, or set"
