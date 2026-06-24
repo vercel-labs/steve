@@ -25,8 +25,11 @@ services:
     network_mode: host
     environment:
       LISTEN: "{{ beszel_agent_port }}"
-{% if beszel_agent_key | default('') | length > 0 %}
-      KEY: "{{ beszel_agent_key }}"
+      # Public key + token from the hub's "Add System" flow.
+      KEY: "{{ beszel_agent_key | default('') }}"
+{% if beszel_agent_token | default('') | length > 0 %}
+      TOKEN: "{{ beszel_agent_token }}"
+      HUB_URL: "{{ beszel_hub_url | default('http://127.0.0.1:' ~ beszel_hub_port) }}"
 {% endif %}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro

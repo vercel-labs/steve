@@ -75,6 +75,12 @@ monitoring_dir: "/opt/beszel"
 beszel_hub_port: 8090
 # Port the Beszel agent listens on for the hub (loopback only).
 beszel_agent_port: 45876
+# Agent credentials from the hub's "Add System" flow (Beszel UI -> Add System).
+# The hub shows a public KEY; the WebSocket-based agent also gets a TOKEN.
+beszel_agent_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINdKZV4m7N8SNyZQhu3ZCS1L48URuWlECHuNhQewRdCF"
+beszel_agent_token: "25d09c13-7c39-432f-8864-7f6f84a4a334"
+# Hub URL the agent connects back to (use the public origin for the WS handshake).
+beszel_hub_url: "https://status.eve.phil.bingo"
 
 # --- Reverse proxy / TLS (caddy) ------------------------------------------
 # Leave empty until DNS is pointed at the droplet. While empty, Caddy serves
