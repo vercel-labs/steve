@@ -14,6 +14,11 @@ The agent is a durable, multi-step **data analyst**: given a request it
 (1) generates a synthetic dataset, (2) analyzes it, and (3) summarizes the
 result — each a distinct durable step, and all code runs inside the sandbox.
 
+It runs locally for the proofs below, **and** is deployed end-to-end to an
+independent DigitalOcean droplet (no Vercel) with a one-command Ansible
+pipeline. See **[What's deployed](#whats-deployed)** for the live topology and
+**[`deploy/README.md`](./deploy/README.md)** for the full runbook.
+
 ## What it proves
 
 | Vercel-proprietary service | Replaced here by |
@@ -175,29 +180,61 @@ make proof-isolation   # sandbox prints container hostname; host-only secret unr
 make proof-novercel    # greps agent/ + .env for active Vercel coupling -> CLEAN
 ```
 
-## Deploying to a VPS (e.g. DigitalOcean)
+## What's deployed
 
-This PoC was verified locally; the same artifacts run on any Linux VPS with
-Docker. There is **no Vercel deploy step**.
+Beyond the local proofs, the whole stack is deployed to a single **DigitalOcean
+droplet** — provisioned, hardened, and configured entirely by an **Ansible**
+pipeline under [`deploy/`](./deploy). There is **no Vercel deploy step**. What
+runs on the droplet:
 
-1. Provision a droplet (any standard plan — the Docker sandbox does **not**
-   require KVM/nested virtualization, unlike microsandbox).
-2. Install Docker + Docker Compose and Node 24 + pnpm.
-3. Copy the repo, `pnpm install`, set `.env` (use a strong
-   `ROUTE_AUTH_BASIC_PASSWORD`, a real `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`,
-   and point
-   `WORKFLOW_POSTGRES_URL` at your Postgres).
-4. `make db-up && make db-migrate`.
-5. Run the host under a process manager (systemd / pm2):
-   `PORT=3000 pnpm exec eve dev --no-ui --host 0.0.0.0`.
-   - The host process needs access to the Docker socket to drive sandbox
-     containers (run as a user in the `docker` group).
-6. Put TLS + a reverse proxy (Caddy/Nginx) in front; the agent serves
-   `/eve/v1/*`. Auth is HTTP Basic via `ROUTE_AUTH_BASIC_*`.
+| Component | What it is | Where |
+| --- | --- | --- |
+| **eve agent** | the durable data-analyst host (`eve dev --no-ui`), native under systemd | `127.0.0.1:3000` (`steve.service`) |
+| **Next.js UI** | a chat front-end (`withEve` + `useEveAgent`), native under systemd | `127.0.0.1:3001` (`steve-web.service`) |
+| **Postgres** | the durable Workflow world (Docker) | `127.0.0.1:5544` (`steve-postgres`) |
+| **Docker sandbox** | per-run isolated containers the agent spawns via the Docker socket | ephemeral |
+| **Beszel** | host/Docker monitoring — hub (dashboard) + agent, in Docker | `127.0.0.1:8090` + agent |
+| **Caddy** | public reverse proxy, automatic Let's Encrypt TLS, header injection | `:80/:443` |
 
-> Note: the production `eve start` path is blocked by the queue-handler bug
-> documented in `_internal/ISSUES.md`; until that is fixed upstream, run the
-> long-lived host with `eve dev --no-ui`.
+Public routing (single droplet, all behind Caddy):
+
+```
+eve.phil.bingo
+  ├─ /eve/*, /.well-known/workflow/*  ->  eve agent      (127.0.0.1:3000)
+  └─ everything else (the chat UI)    ->  Next.js         (127.0.0.1:3001)
+status.eve.phil.bingo                 ->  Beszel hub      (127.0.0.1:8090)
+```
+
+Every response carries **`x-hosted-on-vercel: false`**, injected by Caddy, to
+make the "not on Vercel" claim self-evident.
+
+### Deploy / operate
+
+```bash
+cd deploy
+export DO_API_TOKEN=dop_v1_...
+make deps && make all          # provision -> harden -> deploy
+make deploy                    # redeploy latest (idempotent)
+make status / make logs        # operate the droplet
+```
+
+Highlights of the pipeline (full detail in [`deploy/README.md`](./deploy/README.md)):
+
+- **Provision** a droplet via the DO API; **harden** it (non-root deploy user,
+  key-only SSH, `ufw` 22/80/443, `fail2ban`, unattended security upgrades).
+- **Agent + UI** run under systemd; the agent unit waits for Postgres on boot.
+  Code ships via a read-only GitHub **deploy key** + `git pull`; the local
+  `.env` is copied up (PoC-simple, no vault).
+- **Caddy** path-routes the eve API straight to the agent and everything else to
+  the UI — deliberately *not* using `withEve`'s production rewrite, which
+  double-prefixes paths for a separate-origin agent (see `_internal/DX_NOTES.md`).
+- **Auth:** the agent is **public (`none()`)** so the UI works without
+  credentials — a PoC choice. Swap `agent/channels/eve.ts` back to
+  `[localDev(), httpBasic({...})]` to lock it down.
+
+> Why `eve dev --no-ui` rather than `eve start`? In eve 0.13.3 only the dev host
+> registers the custom Postgres world's queue handler; `eve start` returns
+> "Unhandled queue". See `_internal/ISSUES.md`.
 
 ## Gotchas (discrepancies from the naive setup)
 
@@ -228,10 +265,14 @@ These were discovered while building; full detail in `_internal/ISSUES.md`.
 agent/
   agent.ts                 direct OpenAI/Anthropic model + experimental.workflow.world
   instructions.md          data-analyst persona (always computes via the sandbox)
-  channels/eve.ts          HTTP channel, auth = [localDev(), httpBasic()]
+  channels/eve.ts          HTTP channel, auth = [none()] (public, PoC) — see deploy notes
   sandbox/sandbox.ts        Docker backend, deny-all egress
   tools/run_python.ts      executes Python in the sandbox -> {stdout,stderr,exitCode}
   instrumentation.ts       OTel traces -> Jaeger or Axiom (optional)
+app/, components/, lib/    Next.js chat UI (withEve + useEveAgent)
+next.config.ts             withEve(); Turbopack node:module stub workaround
+deploy/                    Ansible: provision + harden + deploy agent, UI, Beszel, Caddy
+  README.md                full deploy runbook; roles/ for each component
 vector.toml                Vector: tail host logs -> Axiom (optional)
 docker-compose.yml         postgres:16 (+ jaeger `observability` / vector `logs` profiles)
 Makefile                   db-up, db-migrate, dev, observe, logs-up, proof-* targets

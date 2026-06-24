@@ -151,11 +151,26 @@ curl -I http://<droplet-ip>/                 # -> x-hosted-on-vercel: false
    curl https://eve.phil.bingo/eve/v1/health    # agent API
    curl -I https://eve.phil.bingo/              # x-hosted-on-vercel: false
    ```
-4. **Beszel first run:** open `https://status.eve.phil.bingo/`, create the admin
-   account, then **Add System** with host `127.0.0.1` and port `45876`. The hub
-   shows a public key to authorize; paste it into `group_vars/all.yml` as
-   `beszel_agent_key` and re-run deploy (or complete the add-system flow in the
-   hub, which writes the key to the agent on connect).
+4. **Beszel monitoring first run.** The hub + agent are deployed automatically,
+   but the agent needs credentials from the hub to connect:
+   1. Open `https://status.eve.phil.bingo/` and create the admin account.
+   2. **Add System** with host `127.0.0.1` and port `45876`. The hub shows a
+      public **key** (and the agent uses a **token** for the WebSocket handshake).
+   3. Put both into `group_vars/all.yml` and re-run deploy:
+      ```yaml
+      beszel_agent_key: "ssh-ed25519 AAAA..."
+      beszel_agent_token: "<uuid-from-add-system>"
+      beszel_hub_url: "https://status.eve.phil.bingo"
+      ```
+      ```bash
+      ansible-playbook deploy.yml
+      ```
+   The agent then logs `WebSocket connected host=status.eve.phil.bingo` and the
+   dashboard shows live CPU / memory / disk / network / Docker metrics.
+
+   > Note: `beszel_agent_token` is a shared secret committed in plaintext in
+   > `group_vars/all.yml` (PoC convenience, consistent with the rest of this
+   > setup). The `beszel_agent_key` is a public key and safe to commit.
 
 ## Redeploying new changes
 
