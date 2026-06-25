@@ -71,8 +71,8 @@ importers:
         specifier: 1.1.1
         version: 1.1.1(@types/react-dom@19.2.3(@types/react@19.2.15))(@types/react@19.2.15)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       eve:
-        specifier: ^0.13.3
-        version: 0.13.3(@opentelemetry/api@1.9.1)(@vercel/functions@3.7.3(@aws-sdk/credential-provider-web-identity@3.972.49))(ai@7.0.0-beta.178(zod@4.4.3))(chokidar@5.0.0)(dotenv@17.3.1)(drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.20.0))(giget@3.3.0)(jiti@2.7.0)(next@16.2.9(@opentelemetry/api@1.9.1)(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(react@19.2.6)
+        specifier: ^0.13.6
+        version: 0.13.6(@opentelemetry/api@1.9.1)(@vercel/functions@3.7.3(@aws-sdk/credential-provider-web-identity@3.972.49))(ai@7.0.0-beta.178(zod@4.4.3))(chokidar@5.0.0)(dotenv@17.3.1)(drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.20.0))(giget@3.3.0)(jiti@2.7.0)(next@16.2.9(@opentelemetry/api@1.9.1)(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(react@19.2.6)
       lucide-react:
         specifier: 1.16.0
         version: 1.16.0(react@19.2.6)
@@ -3555,8 +3555,8 @@ packages:
     resolution: {integrity: sha512-aIL5Fx7mawVa300al2BnEE4iNvo1qETxLrPI/o05L7z6go7fCw1J6EQmbK4FmJ2AS7kgVF/KEZWufBfdClMcPg==}
     engines: {node: '>= 0.6'}
 
-  eve@0.13.3:
-    resolution: {integrity: sha512-UeDjzBq+j6XhECSW5FJjz8Lin4yw75rOchxbI/rmeRj9c9ldERwH/tb+aQRRzh3ZhnkFITzsBpNyF2arYcEjXQ==}
+  eve@0.13.6:
+    resolution: {integrity: sha512-XnM7GK58jQL1FOytG58JeVelD18wDmb2do7dV9BkY+KYgLe0CcVqQBIjGgEiA+H7avJCiR1tj8QOvOanrCWhEA==}
     engines: {node: '>=24'}
     hasBin: true
     peerDependencies:
@@ -9103,7 +9103,7 @@ snapshots:
 
   etag@1.8.1: {}
 
-  eve@0.13.3(@opentelemetry/api@1.9.1)(@vercel/functions@3.7.3(@aws-sdk/credential-provider-web-identity@3.972.49))(ai@7.0.0-beta.178(zod@4.4.3))(chokidar@5.0.0)(dotenv@17.3.1)(drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.20.0))(giget@3.3.0)(jiti@2.7.0)(next@16.2.9(@opentelemetry/api@1.9.1)(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(react@19.2.6):
+  eve@0.13.6(@opentelemetry/api@1.9.1)(@vercel/functions@3.7.3(@aws-sdk/credential-provider-web-identity@3.972.49))(ai@7.0.0-beta.178(zod@4.4.3))(chokidar@5.0.0)(dotenv@17.3.1)(drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.20.0))(giget@3.3.0)(jiti@2.7.0)(next@16.2.9(@opentelemetry/api@1.9.1)(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(react@19.2.6):
     dependencies:
       ai: 7.0.0-beta.178(zod@4.4.3)
       nitro: 3.0.260610-beta(@vercel/functions@3.7.3(@aws-sdk/credential-provider-web-identity@3.972.49))(chokidar@5.0.0)(dotenv@17.3.1)(drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.20.0))(giget@3.3.0)(jiti@2.7.0)
