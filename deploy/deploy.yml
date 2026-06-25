@@ -14,7 +14,8 @@
 #   app        - clone, install, .env, Postgres, migrate, eve agent (systemd)
 #   frontend   - build Next.js UI, run `next start` (systemd), the public site
 #   monitoring - Beszel hub + agent (Docker)
-#   caddy      - TLS reverse proxy: domain -> UI, status subdomain -> Beszel
+#   jaeger     - Jaeger all-in-one trace UI + OTLP receiver (Docker)
+#   caddy      - TLS reverse proxy: domain -> UI, status -> Beszel, jaeger -> Jaeger
 - name: Deploy the steve eve-agent host
   hosts: steve
   remote_user: "{{ app_user }}"
@@ -27,6 +28,8 @@
     - role: frontend
     - role: monitoring
       when: monitoring_enabled | default(false)
+    - role: jaeger
+      when: jaeger_enabled | default(false)
     - role: caddy
       become: true
 
@@ -62,4 +65,8 @@
             {{ ('Monitoring: https://' + monitoring_domain + '/  (Beszel; create admin on first visit)')
                if (monitoring_enabled | default(false) and (monitoring_domain | default('') | length > 0))
                else 'Monitoring: disabled or not exposed' }}
+          - >-
+            {{ ('Traces: https://' + jaeger_domain + '/  (Jaeger; Basic auth user ' + jaeger_basic_auth_user + ')')
+               if (jaeger_enabled | default(false) and (jaeger_domain | default('') | length > 0))
+               else 'Traces: Jaeger disabled or not exposed' }}
           - "Header check: curl -I returns 'x-hosted-on-vercel: false'."

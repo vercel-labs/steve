@@ -1,0 +1,41 @@
+---
+# Stand up Jaeger all-in-one via Docker Compose to receive the agent's OTLP
+# trace spans and serve the trace-exploration UI. Docker is already installed by
+# the `docker` role; Caddy fronts the UI with TLS + Basic auth.
+
+- name: Create the Jaeger directory
+  ansible.builtin.file:
+    path: "{{ jaeger_dir }}"
+    state: directory
+    owner: "{{ app_user }}"
+    group: "{{ app_user }}"
+    mode: "0755"
+  become: true
+
+- name: Render the Jaeger docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ jaeger_dir }}/docker-compose.yml"
+    owner: "{{ app_user }}"
+    group: "{{ app_user }}"
+    mode: "0644"
+  become: true
+  register: jaeger_compose
+
+- name: Start Jaeger (all-in-one)
+  ansible.builtin.command:
+    cmd: docker compose up -d
+    chdir: "{{ jaeger_dir }}"
+  become: true
+  become_user: "{{ app_user }}"
+  register: jaeger_up
+  changed_when: "'Started' in jaeger_up.stderr or 'Created' in jaeger_up.stderr or jaeger_compose is changed"
+
+- name: Wait for the Jaeger UI to answer on localhost
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ jaeger_ui_port }}/"
+    status_code: [200, 301, 302, 404]
+  register: jaeger_health
+  retries: 20
+  delay: 3
+  until: jaeger_health.status in [200, 301, 302, 404]

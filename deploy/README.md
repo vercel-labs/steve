@@ -1,10 +1,11 @@
 # Deploying steve to a DigitalOcean droplet (Ansible)
 
 Provisions a droplet, hardens it, and runs the self-hosted `eve` agent, a
-Next.js UI, and Beszel monitoring behind Caddy — with **zero Vercel
-infrastructure**, on independent hardware. The agent and UI run natively under
-`systemd`; Postgres (the durable Workflow world) and Beszel run in Docker; Caddy
-terminates TLS and injects `x-hosted-on-vercel: false` on every response.
+Next.js UI, Beszel monitoring, and Jaeger tracing behind Caddy — with **zero
+Vercel infrastructure**, on independent hardware. The agent and UI run natively
+under `systemd`; Postgres (the durable Workflow world), Beszel, and Jaeger run in
+Docker; Caddy terminates TLS and injects `x-hosted-on-vercel: false` on every
+response.
 
 ```
 你 (laptop)  --ssh-->  droplet
@@ -12,11 +13,13 @@ terminates TLS and injects `x-hosted-on-vercel: false` on every response.
      ├─ eve.phil.bingo
      │     ├─ /eve/*, /.well-known/workflow/*  -> steve     (127.0.0.1:3000)
      │     └─ everything else (the UI)         -> steve-web (127.0.0.1:3001)
-     └─ status.eve.phil.bingo                  -> beszel-hub (127.0.0.1:8090)
+     ├─ status.eve.phil.bingo                  -> beszel-hub (127.0.0.1:8090)
+     └─ jaeger.eve.phil.bingo (Basic auth)     -> jaeger     (127.0.0.1:16686)
 
    steve.service       eve dev --no-ui   (127.0.0.1:3000)  [spawns sandboxes via Docker socket]
    steve-web.service   next start        (127.0.0.1:3001)  [withEve + useEveAgent UI]
-   docker: steve-postgres (127.0.0.1:5544), beszel-hub, beszel-agent
+   docker: steve-postgres (127.0.0.1:5544), beszel-hub, beszel-agent,
+           steve-jaeger (UI 127.0.0.1:16686, OTLP 127.0.0.1:4318)
 ```
 
 ## Why these choices
@@ -44,6 +47,12 @@ terminates TLS and injects `x-hosted-on-vercel: false` on every response.
   credentials. Lock it down by switching `agent/channels/eve.ts` back to
   `[localDev(), httpBasic({...})]` (and front the UI with an auth-injecting
   route). See `_internal/DX_NOTES.md` for the auth trade-offs.
+- **Jaeger over Axiom for the demo**: traces go to a self-hosted Jaeger on the
+  droplet (vanilla OpenTelemetry, no SaaS) whose UI is exposed publicly behind
+  Caddy with HTTP Basic auth, so the `ai.eve.turn` span tree can be shown live in
+  a browser. Both Jaeger UI and OTLP receiver bind to `127.0.0.1`; only Caddy is
+  internet-facing. Axiom remains available by setting `AXIOM_TOKEN` (it takes
+  precedence over the Jaeger OTLP endpoint).
 
 ## Prerequisites (on your machine)
 
@@ -136,10 +145,13 @@ curl -I http://<droplet-ip>/                 # -> x-hosted-on-vercel: false
    - your app domain (e.g. `eve.phil.bingo`)
    - the monitoring subdomain (e.g. `status.eve.phil.bingo`), if you want the
      Beszel dashboard exposed.
+   - the tracing subdomain (e.g. `jaeger.eve.phil.bingo`), if you want the
+     Jaeger trace UI exposed.
 2. Set in `group_vars/all.yml`:
    ```yaml
    domain: "eve.phil.bingo"
    monitoring_domain: "status.eve.phil.bingo"   # or "" to keep Beszel private
+   jaeger_domain: "jaeger.eve.phil.bingo"       # or "" to keep Jaeger private
    acme_email: "you@example.com"
    ```
 3. Re-run the deploy — Caddy provisions Let's Encrypt certs automatically:
@@ -171,6 +183,23 @@ curl -I http://<droplet-ip>/                 # -> x-hosted-on-vercel: false
    > Note: `beszel_agent_token` is a shared secret committed in plaintext in
    > `group_vars/all.yml` (PoC convenience, consistent with the rest of this
    > setup). The `beszel_agent_key` is a public key and safe to commit.
+5. **Jaeger tracing.** Jaeger all-in-one is deployed automatically and the agent
+   ships its OpenTelemetry spans to it (the rsynced `.env` sets
+   `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`; leave `AXIOM_TOKEN` unset,
+   as it takes precedence). The UI is exposed at `https://jaeger.eve.phil.bingo`
+   behind Caddy with HTTP Basic auth:
+   ```yaml
+   jaeger_basic_auth_user: "eve"
+   # bcrypt hash; regenerate with: caddy hash-password --plaintext '<password>'
+   jaeger_basic_auth_hash: "$2a$14$..."
+   ```
+   Drive a session in the UI, then open the Jaeger UI, pick service `steve`, and
+   explore the `ai.eve.turn -> ai.streamText -> ai.toolCall` span tree.
+
+   > The default demo login is `eve` / `justshipthings`. Change the password by
+   > generating a new bcrypt hash and re-running deploy. Trace payloads can
+   > include prompts and tool args, so don't leave the default in place for
+   > anything sensitive.
 
 ## Redeploying new changes
 
@@ -209,6 +238,7 @@ sudo ufw status                   # firewall (22/80/443 only)
 | `roles/app` | Node 24/pnpm, deploy key, clone, `.env`, Postgres, migrate, agent systemd |
 | `roles/frontend` | swapfile, `next build`, `steve-web` systemd unit (the public UI) |
 | `roles/monitoring` | Beszel hub + agent via Docker Compose |
+| `roles/jaeger` | Jaeger all-in-one (trace UI + OTLP receiver) via Docker Compose |
 | `roles/caddy` | reverse proxy, TLS, path routing, `x-hosted-on-vercel: false` header |
 
 ## Tearing down

@@ -1,0 +1,18 @@
+# Managed by Ansible (jaeger role).
+# Jaeger all-in-one: receives eve's OpenTelemetry trace spans over OTLP/HTTP and
+# serves the trace-exploration UI. The agent exports to 127.0.0.1:{{ jaeger_otlp_port }}
+# (set OTEL_EXPORTER_OTLP_ENDPOINT in .env); Caddy terminates TLS and adds HTTP
+# Basic auth in front of the UI at {{ jaeger_domain | default('(internal)') }}.
+#
+# Both ports are bound to localhost — nothing is reachable except through Caddy
+# (UI) or the loopback OTLP receiver the agent ships to.
+services:
+  jaeger:
+    image: jaegertracing/all-in-one:1.60
+    container_name: steve-jaeger
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "127.0.0.1:{{ jaeger_ui_port }}:16686"   # Jaeger UI (fronted by Caddy)
+      - "127.0.0.1:{{ jaeger_otlp_port }}:4318"  # OTLP HTTP receiver (agent -> here)

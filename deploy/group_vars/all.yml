@@ -82,6 +82,28 @@ beszel_agent_token: "25d09c13-7c39-432f-8864-7f6f84a4a334"
 # Hub URL the agent connects back to (use the public origin for the WS handshake).
 beszel_hub_url: "https://status.eve.phil.bingo"
 
+# --- Tracing (Jaeger) -----------------------------------------------------
+# Jaeger runs on this droplet via Docker and receives eve's OpenTelemetry trace
+# spans over OTLP/HTTP. The agent exports to it when the deployed .env sets
+# OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318" (and leaves AXIOM_TOKEN
+# unset — Axiom takes precedence). The UI is exposed publicly at jaeger_domain
+# behind Caddy with HTTP Basic auth so anyone can browse the spans for a demo.
+jaeger_enabled: true
+jaeger_dir: "/opt/jaeger"
+# Jaeger all-in-one UI (bound to localhost; Caddy terminates TLS + adds auth).
+jaeger_ui_port: 16686
+# OTLP/HTTP receiver the agent ships spans to (bound to localhost).
+jaeger_otlp_port: 4318
+# Public subdomain for the Jaeger UI (needs its own A record -> droplet IP).
+# Leave empty to keep Jaeger internal (reach it via SSH tunnel instead).
+jaeger_domain: "jaeger.eve.phil.bingo"
+# HTTP Basic credentials for the public Jaeger UI. The password is a bcrypt
+# hash (Caddy `basic_auth` format). Regenerate with:
+#   caddy hash-password --plaintext '<password>'
+# Default demo login below is user `eve` / password `justshipthings`.
+jaeger_basic_auth_user: "eve"
+jaeger_basic_auth_hash: "$2a$14$bJVPqzWhGCf0.G/T9MC6peaH5BckzStlmz3PMl/Q8hhzf0eTgOjRC"
+
 # --- Reverse proxy / TLS (caddy) ------------------------------------------
 # Leave empty until DNS is pointed at the droplet. While empty, Caddy serves
 # the app over plain HTTP on :80 (good for smoke-testing by IP). Once you set

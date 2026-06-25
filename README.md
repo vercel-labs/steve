@@ -7,8 +7,8 @@ runs **end to end with zero Vercel-proprietary infrastructure**:
   (`@workflow/world-postgres`), not Vercel Workflow.
 - **Code isolation** comes from a **Docker sandbox**, not Vercel Sandbox.
 - **Model calls** go **directly to OpenAI**, not through the AI Gateway.
-- **Observability** comes from the **Workflow CLI** + optional **Jaeger/Axiom**, not
-  the Vercel Agent Runs dashboard.
+- **Observability** comes from the **Workflow CLI** + self-hosted **Jaeger**
+  (OpenTelemetry traces; Axiom optional), not the Vercel Agent Runs dashboard.
 
 The agent is a durable, multi-step **data analyst**: given a request it
 (1) generates a synthetic dataset, (2) analyzes it, and (3) summarizes the
@@ -128,18 +128,29 @@ make observe        # workflow inspect runs --backend @workflow/world-postgres
 make observe-web    # workflow web --backend @workflow/world-postgres  (browser UI)
 ```
 
-Optional OpenTelemetry traces to a local Jaeger:
+### OpenTelemetry traces -> Jaeger (default)
+
+eve's trace spans (`ai.eve.turn` -> `ai.streamText` -> `ai.toolCall`) are
+exported over OTLP/HTTP by `agent/instrumentation.ts`. The default destination is
+a self-hosted **Jaeger**:
 
 ```bash
 docker compose --profile observability up -d jaeger
-# set OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 in .env, restart `make dev`
+# .env ships traces to it via OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+make dev          # (restart if it was already running)
+make session      # drive a run, then explore the spans:
 # traces at http://localhost:16686
 ```
 
-### Send traces and logs to Axiom
+On the deployed droplet Jaeger runs in Docker and its UI is exposed publicly at
+**`https://jaeger.eve.phil.bingo`** behind Caddy with HTTP Basic auth, so the
+spans can be demoed in a browser. See [`deploy/README.md`](./deploy/README.md).
 
-For external visibility, ship both signals to [Axiom](https://axiom.co) — into a
-single dataset (named `steve` here, fine for the free plan):
+### Optional: send traces and logs to Axiom
+
+For external/cloud visibility instead of Jaeger, ship both signals to
+[Axiom](https://axiom.co) — into a single dataset (named `steve` here, fine for
+the free plan):
 
 - **Traces** (eve's `ai.eve.turn` / model-call / tool-call spans) are exported
   by `agent/instrumentation.ts` directly over OTLP/HTTP.
@@ -157,7 +168,8 @@ Setup:
    AXIOM_DATASET="steve"          # optional, defaults to "steve"
    AXIOM_DOMAIN="api.axiom.co"    # optional, or api.eu.axiom.co
    ```
-   (Setting `AXIOM_TOKEN` takes precedence over the Jaeger `OTEL_*` path.)
+   (Setting `AXIOM_TOKEN` takes precedence over the Jaeger `OTEL_*` path, so
+   comment it out to fall back to Jaeger.)
 3. Run the agent and the log shipper:
    ```bash
    make dev          # writes logs to ./logs/host.log
@@ -195,6 +207,7 @@ runs on the droplet:
 | **Postgres** | the durable Workflow world (Docker) | `127.0.0.1:5544` (`steve-postgres`) |
 | **Docker sandbox** | per-run isolated containers the agent spawns via the Docker socket | ephemeral |
 | **Beszel** | host/Docker monitoring — hub (dashboard) + agent, in Docker | `127.0.0.1:8090` + agent |
+| **Jaeger** | OpenTelemetry trace UI + OTLP receiver (Docker); the agent ships spans to it | `127.0.0.1:16686` + `:4318` |
 | **Caddy** | public reverse proxy, automatic Let's Encrypt TLS, header injection | `:80/:443` |
 
 Public routing (single droplet, all behind Caddy):
@@ -204,6 +217,7 @@ eve.phil.bingo
   ├─ /eve/*, /.well-known/workflow/*  ->  eve agent      (127.0.0.1:3000)
   └─ everything else (the chat UI)    ->  Next.js         (127.0.0.1:3001)
 status.eve.phil.bingo                 ->  Beszel hub      (127.0.0.1:8090)
+jaeger.eve.phil.bingo (Basic auth)    ->  Jaeger UI       (127.0.0.1:16686)
 ```
 
 Every response carries **`x-hosted-on-vercel: false`**, injected by Caddy, to
