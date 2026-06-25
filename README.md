@@ -62,7 +62,7 @@ These are pinned exactly in `package.json`; the beta line matters (see Gotchas).
 
 | Package | Version |
 | --- | --- |
-| `eve` | `0.13.3` |
+| `eve` | `0.13.6` |
 | `@workflow/world-postgres` | `5.0.0-beta.19` |
 | `workflow` (CLI) | `4.5.0` |
 | `@ai-sdk/openai` | `3.0.74` |
