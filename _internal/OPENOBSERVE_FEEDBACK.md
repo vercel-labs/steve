@@ -1,5 +1,20 @@
 # Observe SDK (`@open-observe/sdk`) integration — feedback for the maintainer
 
+> **RESOLVED (update): the data was never dropped.** The "blocking bug" below was
+> a misdiagnosis. The dashboard ingests and stores OTLP correctly. The "0 rows"
+> reads were caused by querying the read APIs with `?projectId=steve`, which the
+> dashboard silently ignored (it only honored `?project=steve`) and fell back to
+> the empty `default` project. Confirmed by re-querying with `?project=steve`:
+> `{sessions:7, traces:272, logs:84}`.
+>
+> Fix landed in the openobserve dashboard: `readProjectId` now accepts `projectId`
+> as an alias for `project` on the read path. See `OPENOBSERVE_CAPTURE.md` for the
+> full root-cause writeup and verification. PR: https://github.com/vercel-labs/openobserve/pull/1
+>
+> The original investigation is preserved below as a record of how the false
+> "data loss" conclusion was reached — the actual data-flow notes (SDK export,
+> scope tree, allowlist behavior) remain accurate and useful.
+
 Context: integrated `@open-observe/sdk` into a self-hosted eve agent (steve) to
 replace the existing vanilla-OTel → Jaeger tracing pipeline, and ran the local
 `@open-observe/dashboard` alongside it. steve is an **external** project (not in
@@ -7,8 +22,9 @@ the openobserve monorepo), linked via `pnpm add link:`. SDK version `0.0.1`,
 dashboard `0.0.1`, eve `0.13.6`, Node 24.15, pnpm 10.33, Next 16.
 
 This is product feedback for the openobserve maintainer. Bottom line: **the SDK
-side worked and is well-designed**; **the dashboard silently drops valid OTLP
-data it 200s**, which is the one blocking bug.
+side worked and is well-designed**; the read APIs silently resolved an
+unrecognized `projectId=` query param to the empty `default` project, which
+looked like dashboard-side data loss but was not (see resolution banner above).
 
 Legend: [+] delight / good design · [~] friction / surprise · [!] sharp edge / bug
 
@@ -21,11 +37,12 @@ Legend: [+] delight / good design · [~] friction / surprise · [!] sharp edge /
   packet capture confirms it exports a rich, correct span tree (workflow steps,
   `gen_ai::chat gpt-5-mini`, `eve::ai.eve.turn`, undici HTTP) with
   `service.name=steve` and the right project header.
-- **The blocking issue is dashboard-side**: the dashboard accepts every OTLP
-  POST with `200 {"partialSuccess":{}}` but persists **zero** rows. Every
-  read API (`/api/counts`, `/api/traces`, `/api/sessions`, `/api/metrics`,
-  `/api/logs`) returns 0 for the project, despite the project being
-  auto-created and the payloads being well-formed OTLP/JSON with hex IDs.
+- ~~**The blocking issue is dashboard-side**: the dashboard accepts every OTLP
+  POST with `200 {"partialSuccess":{}}` but persists **zero** rows.~~
+  **CORRECTION:** rows were persisted the whole time. The reads returned 0
+  because they were queried with `?projectId=` (silently ignored → `default`
+  project) instead of `?project=`. The dashboard now accepts both. See the
+  resolution banner at the top.
 
 ---
 
@@ -113,8 +130,15 @@ Legend: [+] delight / good design · [~] friction / surprise · [!] sharp edge /
 
 ## Sharp edges / the blocking bug
 
-- **[!] BLOCKER: the dashboard 200s every OTLP POST but stores nothing.** This
-  is the one thing that prevented a working end-to-end demo. Evidence:
+- **[!] ~~BLOCKER: the dashboard 200s every OTLP POST but stores nothing.~~**
+  **RESOLVED — misdiagnosis.** The dashboard stored everything; the reads below
+  used `?projectId=steve`, which the read APIs ignored (they only honored
+  `?project=`) and resolved to the empty `default` project. Re-querying with
+  `?project=steve` returned the real counts. The "two likely suspects" listed
+  below were the right instinct (suspect #2, a read/write project-id mismatch,
+  is exactly what happened) — the misleading part was that `default` is also
+  empty, which made the mismatch look ruled out. Original evidence retained
+  below for the record.
 
   - Dashboard log shows real ingest with non-trivial processing time:
     ```
@@ -195,9 +219,17 @@ co-exists with eve's OTel provider correctly, the allowlist and debug tooling
 are excellent, and the exported data is rich and correctly shaped. The
 instrumentation work here is genuinely good.
 
-The dashboard is the weak link for this use case: it silently discards valid
-data while reporting success, with no ingest-side logging to diagnose it. That
-single behavior is the difference between "drop-in Jaeger replacement" and
-"looks wired up but shows nothing." Fixing the ingest persistence (and adding a
-stored-count log / honest partial-success response) would make this a clean
-replacement for the Jaeger pipeline.
+The dashboard turned out to be fine for this use case: it ingested and stored
+all OTLP correctly. The friction that masqueraded as "the weak link" was a
+read-side ergonomics trap — an unrecognized `projectId=` query param silently
+resolving to the empty `default` project, with no error and no stored-count to
+contradict it. That single behavior is what made a working pipeline look like
+"looks wired up but shows nothing."
+
+Now fixed (read APIs accept `projectId` as an alias for `project`). Two
+follow-ups would harden this class of problem further and are still worth doing:
+1. Make the read fallback explicit — returning `default` for an unknown/missing
+   project param hides client mistakes; consider a 400 or echoing the resolved
+   project id.
+2. Log/return a stored-count on ingest (`ingested X/Y spans (project=…)`) so a
+   200 is distinguishable from a no-op.
