@@ -1,9 +1,18 @@
 # Developer experience notes — building a self-hosted eve agent
 
 Context: built a fully self-hosted eve PoC (Postgres Workflow world + Docker
-sandbox + direct OpenAI) on eve 0.13.3. These are subjective DX observations —
-not bugs (those live in ISSUES.md), but things that were surprising, rough,
-delightful, or well-designed. Intended as product feedback for the eve team.
+sandbox + direct OpenAI), originally on eve 0.13.3; re-verified on eve 0.15.0.
+These are subjective DX observations — not bugs (those live in ISSUES.md), but
+things that were surprising, rough, delightful, or well-designed. Intended as
+product feedback for the eve team.
+
+> **eve 0.15.0 update (2026-06-26).** Three of the sharp edges below are now
+> FIXED: (1) `eve start` runs the custom world, (2) HEAD `/eve/v1/health` returns
+> 200, (3) the `eve/react` Turbopack `node:module` client build works with no
+> stub. Items marked `[FIXED 0.15.0]` inline. The `eve dev`-as-production-host
+> awkwardness is now largely moot (`eve start` works; we keep `eve dev` only for
+> its sandbox-container reaping). Remaining gaps: no OTel logs signal,
+> `docker()` `onSession` typing, sandbox reaping tied to `eve dev`.
 
 Legend: [+] delight / good design  ·  [~] friction / surprise  ·  [!] sharp edge
 
@@ -67,11 +76,12 @@ Legend: [+] delight / good design  ·  [~] friction / surprise  ·  [!] sharp ed
   doesn't hint at namespaces. Either eve should set this for the configured
   world automatically, or document it loudly.
 
-- **[!] `eve start` silently can't run a custom world.** The docs present
-  `eve build && eve start` as THE self-host path, but only `eve dev` registers
-  the configured world's queue handler in 0.13.3. Discovering this required
-  reading compiled source. The "production" path appears to be the one that
-  doesn't work with the documented self-host feature.
+- **[!][FIXED 0.15.0] `eve start` silently can't run a custom world.** The docs
+  present `eve build && eve start` as THE self-host path, but only `eve dev`
+  registered the configured world's queue handler in 0.13.3. **Fixed in 0.15.0:**
+  `eve start` now registers the direct queue handler for a configured custom
+  world (outside Vercel build env) and runs turns end-to-end (verified). The
+  "production" path now works with the documented self-host feature.
 
 - **[~] "long-running host" is ambiguous.** The plan/docs talk about a
   long-lived host that polls the queue, but it's unclear that the *intended*
@@ -158,7 +168,12 @@ attention. Flagging clearly which is which.
 
 ### eve-specific (actionable for the team)
 
-- **[!] `eve dev --no-ui` as the production host is operationally awkward.**
+- **[!][largely resolved 0.15.0] `eve dev --no-ui` as the production host is
+  operationally awkward.** Since `eve start` now runs the custom world (0.15.0),
+  the production unit can use `eve start` instead of `eve dev` — removing the
+  "why is prod running the dev server?" smell. The one remaining reason to keep
+  `eve dev` is sandbox-container reaping (only `eve dev` reaps). Original 0.13.x
+  framing preserved below.
   Running the long-lived host under systemd means the unit literally invokes
   `eve dev`. This is a recurring papercut beyond the docs issue noted above:
   - It *looks* wrong in a `systemd` unit / runbook ("why is production running
@@ -194,7 +209,12 @@ attention. Flagging clearly which is which.
   the Ansible post-deploy readiness check trivial. Good that it's distinct from
   the authed routes.
 
-- **[!] eve routes 404 on HTTP `HEAD` — including `/eve/v1/health`.** Every
+- **[!][FIXED 0.15.0] eve routes 404 on HTTP `HEAD` — including `/eve/v1/health`.**
+  As of 0.15.0 the health route registers both `GET` and `HEAD`; `curl -I
+  http://127.0.0.1:3000/eve/v1/health` now returns `200`. HEAD-based health/uptime
+  probes work. Original 0.13.x finding preserved below.
+
+  Every
   route we tested returns 200 to `GET` but **404 to `HEAD`** (`/eve/v1/health`,
   `/eve/v1/info`, and `/` all behave this way; verified directly against the eve
   host on `127.0.0.1:3000`, bypassing the proxy, so it's the framework, not
@@ -280,8 +300,13 @@ behind Caddy, `httpBasic()` auth), we tried to actually *use* it two ways — th
 
 ### `eve/react` breaks the Next.js client build under Turbopack
 
-- **[!] `next build` fails: `node:module` pulled into the client chunk via
-  `eve/react`.** A `"use client"` component importing `useEveAgent` from
+- **[!][FIXED 0.15.0] `next build` fails: `node:module` pulled into the client
+  chunk via `eve/react`.** Re-tested on eve 0.15.0 + Next 16.2.9 (Turbopack):
+  `next build` now **compiles successfully with no `node:module` alias/stub**.
+  The `turbopack.resolveAlias` workaround and `lib/node-module-stub.js` were
+  removed from this repo. Original 0.13.x finding preserved below.
+
+  A `"use client"` component importing `useEveAgent` from
   `eve/react` makes Turbopack fail with
   `the chunking context (unknown) does not support external modules
   (request: node:module)` during `EcmascriptModuleContent::new_merged`. We
@@ -329,6 +354,12 @@ behind Caddy, `httpBasic()` auth), we tried to actually *use* it two ways — th
   accident. Good that it exists and is explicit.
 
 ## Suggestions (high-leverage, in priority order)
+
+> **Status after eve 0.15.0:** #3 (eve start runs the custom world), #6 (prod
+> host story), #8 (HEAD on /eve/v1/health), and #10 (eve/react Turbopack build)
+> are **FIXED**. #1/#2 (world version + queue namespace) still apply but are now
+> the main remaining self-host papercuts. #4/#5/#7/#9/#11 not re-checked this pass.
+
 
 1. **Compat check the configured world's `@workflow/world` against eve's
    bundled core at startup**, and fail with an actionable message

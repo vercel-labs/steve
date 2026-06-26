@@ -55,7 +55,7 @@
     - name: Deployment summary
       ansible.builtin.debug:
         msg:
-          - "Agent: systemd 'steve' on 127.0.0.1:{{ app_port }} (eve dev --no-ui)."
+          - "Agent: systemd 'steve' on 127.0.0.1:{{ app_port }} (eve start)."
           - "Web UI: systemd 'steve-web' on 127.0.0.1:{{ web_port }} (next start)."
           - >-
             {{ 'Public site: https://' + domain + '/'

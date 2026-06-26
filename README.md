@@ -64,7 +64,7 @@ These are pinned exactly in `package.json`; the beta line matters (see Gotchas).
 
 | Package | Version |
 | --- | --- |
-| `eve` | `0.13.6` |
+| `eve` | `0.15.0` |
 | `@workflow/world-postgres` | `5.0.0-beta.19` |
 | `workflow` (CLI) | `4.5.0` |
 | `@ai-sdk/openai` | `3.0.74` |
@@ -73,9 +73,12 @@ These are pinned exactly in `package.json`; the beta line matters (see Gotchas).
 | `@opentelemetry/sdk-node` | `0.219.0` |
 
 > **The `@workflow/world-postgres` version is critical.** The npm `latest` tag
-> is `4.2.0`, which is **incompatible** with eve 0.13.3 and will make runs fail
-> mid-execution. You must use the `5.0.0-beta` line that matches eve's bundled
-> `@workflow/core`. See [Gotchas](#gotchas-discrepancies-from-the-naive-setup).
+> is `4.2.0`, which is **incompatible** and will make runs fail mid-execution.
+> You must use the `5.0.0-beta` line that matches eve's bundled `@workflow/core`
+> (eve `0.15.0` bundles `@workflow/core@5.0.0-beta.24`; `world-postgres@5.0.0-beta.19`
+> brings `@workflow/world@5.0.0-beta.13`, which knows the `attr_set` event eve
+> emits — verified end-to-end on `0.15.0`). See
+> [Gotchas](#gotchas-discrepancies-from-the-naive-setup).
 
 ## Setup
 
@@ -109,9 +112,11 @@ make dev
 # -> server listening at http://localhost:3000/
 ```
 
-> Use `make dev` (`eve dev --no-ui`), **not** `eve start`. In eve 0.13.3 only the
-> dev host registers the custom world's queue handler; `eve start` returns
-> `{"error":"Unhandled queue"}`. See [Gotchas](#gotchas-discrepancies-from-the-naive-setup).
+> `make dev` runs `eve dev --no-ui`. As of eve `0.15.0`, **`eve build && eve start`
+> also works** with the custom Postgres world (the old `{"error":"Unhandled queue"}`
+> regression is fixed — verified end-to-end). `eve dev` is still used here because
+> it auto-reaps the per-run Docker sandbox containers on shutdown, which `eve start`
+> does not. See [Gotchas](#gotchas-discrepancies-from-the-naive-setup).
 
 In another terminal, start a session:
 
@@ -234,32 +239,39 @@ Highlights of the pipeline (full detail in [`deploy/README.md`](./deploy/README.
   credentials — a PoC choice. Swap `agent/channels/eve.ts` back to
   `[localDev(), httpBasic({...})]` to lock it down.
 
-> Why `eve dev --no-ui` rather than `eve start`? In eve 0.13.3 only the dev host
-> registers the custom Postgres world's queue handler; `eve start` returns
-> "Unhandled queue". See `_internal/ISSUES.md`.
+> Why `eve dev --no-ui` rather than `eve start`? Historically (eve 0.13.x) only
+> the dev host registered the custom Postgres world's queue handler; `eve start`
+> returned "Unhandled queue". **This is fixed as of eve 0.15.0** — `eve start`
+> now runs the custom world. We still use `eve dev` because only it auto-reaps
+> the per-run Docker sandbox containers on shutdown. See `_internal/ISSUES.md`.
 
 ## Gotchas (discrepancies from the naive setup)
 
 These were discovered while building; full detail in `_internal/ISSUES.md`.
 
-1. **`@workflow/world-postgres@latest` (4.2.0) is incompatible with eve 0.13.3.**
-   Its event schema lacks the `attr_set` event eve emits, so runs fail mid-replay
-   with a `ZodError` (`No matching discriminator "eventType"`). Pin
-   `@workflow/world-postgres@5.0.0-beta.19` to match eve's bundled
-   `@workflow/core@5.0.0-beta.19`.
+1. **`@workflow/world-postgres@latest` (4.2.0) is incompatible.** Its event schema
+   lacks the `attr_set` event eve emits, so runs fail mid-replay with a `ZodError`
+   (`No matching discriminator "eventType"`). Pin `@workflow/world-postgres@5.0.0-beta.19`
+   to match eve's bundled `@workflow/core` (eve `0.15.0` bundles `5.0.0-beta.24`;
+   `world-postgres@5.0.0-beta.19` brings `@workflow/world@5.0.0-beta.13`, which
+   knows `attr_set`). Still required on `0.15.0`.
 
 2. **`WORKFLOW_QUEUE_NAMESPACE` must be `eve`.** eve registers its workflow queue
    handler under prefix `__eve_wkf_workflow_`, but the Postgres world defaults to
    `__wkf_workflow_`. Without the namespace, every job returns
    `400 {"error":"Unhandled queue"}` and runs never advance. Setting
-   `WORKFLOW_QUEUE_NAMESPACE=eve` aligns them.
+   `WORKFLOW_QUEUE_NAMESPACE=eve` aligns them. Still required on `0.15.0`.
 
-3. **Run the host with `eve dev --no-ui`, not `eve start`.** In 0.13.3 only the
-   dev host wires the configured world's direct queue handler.
+3. **~~Run the host with `eve dev --no-ui`, not `eve start`.~~ FIXED in eve 0.15.0.**
+   `eve build && eve start` now runs the custom Postgres world end-to-end (verified:
+   runs complete, `attr_set` persists, no "Unhandled queue"). We still prefer
+   `eve dev --no-ui` only because it auto-reaps the Docker sandbox containers on
+   shutdown; `eve start` leaves them running (operate a reaper if you use it).
 
 4. **`docker()` backend network policy goes on the factory, not `onSession`.**
    A type-declaration bug makes `use({ networkPolicy })` in `onSession` a type
-   error for the Docker backend; the factory option is correctly typed.
+   error for the Docker backend; the factory option is correctly typed. **Still
+   present on eve 0.15.0** (`TS2322: Type 'string' is not assignable to type 'never'`).
 
 ## Project layout
 
@@ -272,7 +284,7 @@ agent/
   tools/run_python.ts      executes Python in the sandbox -> {stdout,stderr,exitCode}
   instrumentation.ts       OTel traces -> OpenObserve (local) or Jaeger (prod)
 app/, components/, lib/    Next.js chat UI (withEve + useEveAgent)
-next.config.ts             withEve(); transpilePackages @open-observe/sdk; node:module stub
+next.config.ts             withEve(); transpilePackages @open-observe/sdk
 deploy/                    Ansible: provision + harden + deploy agent, UI, Beszel, Caddy
   README.md                full deploy runbook; roles/ for each component
 docker-compose.yml         postgres:16 (+ jaeger `observability` profile)

@@ -41,6 +41,11 @@ Legend: [infra] you must operate it · [lifecycle] resource cleanup/expiry ·
   - Containers from a *previous* dev run are out of scope for the *current*
     run's cleanup, so they accumulate across restarts.
   - Running under `eve start` (vs `eve dev`) gets no cleanup wiring at all.
+    (Re-confirmed on eve 0.15.0: after an `eve start` host was killed, two
+    `eve-sbx-*` containers were still `Up` and had to be removed by hand. Note
+    that on 0.15.0 `eve start` now *runs* the custom world — see ISSUES.md — so
+    this reaping gap is more relevant than before, since `eve start` is now a
+    viable production host but still does not reap.)
   - Stopped-but-not-removed containers also linger (cleanup only `stop`s).
 
   **What we'd have to build:** a periodic reaper (e.g. cron/systemd timer)

@@ -1,8 +1,32 @@
 # Issues & notes for the eve team
 
 Running log of friction, surprises, bugs, and doc gaps found while building a
-fully self-hosted eve PoC (eve 0.13.3, Postgres world + Docker sandbox, OpenAI
-direct). Severity: [info] / [minor] / [major].
+fully self-hosted eve PoC (originally eve 0.13.3, Postgres world + Docker
+sandbox, OpenAI direct). Severity: [info] / [minor] / [major].
+
+> **Upgrade note (eve 0.15.0, 2026-06-26).** Re-verified the known failures
+> below against eve `0.15.0` (bundles `@workflow/core@5.0.0-beta.24`). Outcomes:
+> - **[FIXED] `eve start` + custom Postgres world** ("Unhandled queue"). The
+>   route now registers the direct queue handler when a custom world is
+>   configured outside a Vercel build, not just under `eve dev`. Verified live:
+>   a session ran end-to-end under `eve build && eve start` — 2 `step_completed`,
+>   `attr_set` persisted, run `completed`, zero "Unhandled queue", zero ZodError,
+>   code isolated in a sandbox container.
+> - **[FIXED] HTTP `HEAD /eve/v1/health` 404.** The health route now registers
+>   both `GET` and `HEAD`; `curl -I` returns `200`. (See DX_NOTES.md.)
+> - **[FIXED] `eve/react` Next 16 + Turbopack `node:module` client build.**
+>   `next build` now succeeds with **no** `node:module` stub; the workaround
+>   alias and `lib/node-module-stub.js` were removed. (See DX_NOTES.md.)
+> - **[STILL PRESENT] `docker()` `onSession` `use({ networkPolicy })` typing.**
+>   Still `TS2322: Type 'string' is not assignable to type 'never'`; the factory
+>   workaround is still required.
+> - **[STILL REQUIRED] version pin + `WORKFLOW_QUEUE_NAMESPACE=eve`.**
+>   `@workflow/world-postgres@5.0.0-beta.19` still matches (its `@workflow/world@5.0.0-beta.13`
+>   knows `attr_set`); the `eve` queue namespace is still required.
+> - **[UNCHANGED] sandbox-container reaping is only wired to `eve dev`.** After
+>   `eve start` shut down, two `eve-sbx-*` containers were still running (see
+>   SELF_HOST_CONCERNS.md).
+> - **[UNCHANGED] eve emits no OTel logs signal.** (See DX_NOTES.md.)
 
 ## Doc / DX notes
 
@@ -60,8 +84,14 @@ direct). Severity: [info] / [minor] / [major].
   Workaround used in this PoC: set `networkPolicy: "deny-all"` on the `docker()`
   factory itself (which is correctly typed) instead of in `onSession`.
 
-- **[major] Self-hosted Postgres world fails under `eve build && eve start`:
-  `{"error":"Unhandled queue"}` (HTTP 400), run never advances past pending.**
+- **[major][FIXED in eve 0.15.0] Self-hosted Postgres world fails under
+  `eve build && eve start`: `{"error":"Unhandled queue"}` (HTTP 400), run never
+  advances past pending.** As of eve 0.15.0 the workflow-route handler registers
+  the direct queue handler whenever a custom world is configured and it is not a
+  Vercel build env (`p = (o.options.dev || !isVercelBuildEnvironment() && f) && d
+  !== void 0` in `configure-nitro-routes.js`, where `f` = custom world configured),
+  not just under `o.options.dev`. Verified live on 0.15.0 — see the upgrade note
+  at the top of this file. Original 0.13.3 analysis preserved below.
 
   Repro: configure `experimental.workflow.world = "@workflow/world-postgres"`,
   `eve build`, then `PORT=3000 eve start`. POST a session. The run is enqueued
@@ -102,8 +132,14 @@ direct). Severity: [info] / [minor] / [major].
   Workaround under evaluation: run the long-lived host with `eve dev` instead of
   `eve start` (dev registers the direct handler). Verifying next.
 
-- **[major] Version-line trap: `@workflow/world-postgres@latest` (4.2.0) is
-  INCOMPATIBLE with eve 0.13.3; you must use the `5.0.0-beta` line.**
+- **[major][still applies on 0.15.0] Version-line trap:
+  `@workflow/world-postgres@latest` (4.2.0) is INCOMPATIBLE; you must use the
+  `5.0.0-beta` line.** On eve 0.15.0 (bundles `@workflow/core@5.0.0-beta.24`),
+  `@workflow/world-postgres@5.0.0-beta.19` is still the right pin: it brings
+  `@workflow/world@5.0.0-beta.13`, whose event schema knows `attr_set`. Verified:
+  37 `attr_set` events persisted across runs with zero ZodError. The npm `latest`
+  tag for world-postgres is *still* `4.2.0` (beta tag = `5.0.0-beta.19`), so the
+  trap is unchanged. Original 0.13.3 analysis below.
 
   eve 0.13.3 bundles `@workflow/core@5.0.0-beta.19`, `@workflow/world@5.0.0-beta.10`,
   `@workflow/world-local@5.0.0-beta.19`. The `npm` **latest** tag for
@@ -166,5 +202,34 @@ With `@workflow/world-postgres@5.0.0-beta.19`, `WORKFLOW_QUEUE_NAMESPACE=eve`,
 3-step analysis produced real computed numbers (e.g. 1,000 orders, net sales
 269,862.90, avg discount 11.85%, per-product/region breakdowns), all computed in
 the sandbox. Build emits standard Nitro `.output/` (no `.vercel/output`).
+
+## Re-verification on eve 0.15.0 (2026-06-26)
+
+Upgraded `eve` `0.13.6 → 0.15.0` (bundles `@workflow/core@5.0.0-beta.24`),
+kept `@workflow/world-postgres@5.0.0-beta.19`, `WORKFLOW_QUEUE_NAMESPACE=eve`.
+
+- `eve info`: v0.15.0, **0 errors / 0 warnings**.
+- `tsc --noEmit`: clean.
+- `eve build`: clean, standard Nitro `.output/` (no `.vercel/output`).
+- **`eve start` (NOT `eve dev`) PASS — the headline fix.** POSTed a session to
+  the `eve start` host; it ran end-to-end: `run_python` returned container
+  hostname `27f9075c2ea0`, 2 `step_completed`, `turn.completed`,
+  `session.waiting`. Postgres: run `completed`, `attr_set` events persisted,
+  **0** "Unhandled queue", **0** ZodError. `eveVersion:"0.15.0"`,
+  `modelId:"openai/gpt-5-mini"` (direct).
+- **Isolation PASS under `eve start`.** Sandbox printed hostname `57645f1ed822`
+  (≠ host) and `HOST_ONLY_SECRET` = `<unset in sandbox>`.
+- **HEAD `/eve/v1/health` PASS** — returns `200` (was 404 on 0.13.x).
+- **No-Vercel PASS** — `make proof-novercel` → CLEAN.
+- **Next.js UI build PASS without the `node:module` stub** — `next build`
+  (Turbopack) compiled successfully after removing the alias + stub file.
+- Sandbox-container reaping unchanged: after `eve start` shut down, two
+  `eve-sbx-*` containers were still running (manually removed). See
+  SELF_HOST_CONCERNS.md — only `eve dev` reaps.
+
+Note: the durability (kill -9 / resume) proof was NOT re-run on 0.15.0 — the
+durability machinery (workflow event persistence/replay) is unchanged and was
+already proven; re-running it adds little and the world/core event contract was
+re-verified via the `attr_set`/no-ZodError checks above.
 
 <!-- Append findings below as they occur during the build. -->

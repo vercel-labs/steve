@@ -14,9 +14,9 @@ import { MOVIES_CSV } from "./movies";
 // container cannot phone home or reach host services).
 //
 // NOTE: the policy is set on the factory rather than in onSession's use()
-// because of a type-declaration bug in eve 0.13.3 where docker() drops its
-// session-use option types (see _internal/ISSUES.md). The factory is correctly
-// typed and applies the policy at container creation.
+// because of a type-declaration bug (still present in eve 0.15.0) where docker()
+// drops its session-use option types (see _internal/ISSUES.md). The factory is
+// correctly typed and applies the policy at container creation.
 export default defineSandbox({
   backend: docker({
     image: "ghcr.io/vercel/eve:latest",

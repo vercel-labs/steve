@@ -53,7 +53,7 @@ pnpm_env:
   PNPM_CONFIG_MINIMUM_RELEASE_AGE: "0"
   PNPM_CONFIG_DANGEROUSLY_ALLOW_ALL_BUILDS: "true"
 
-# The eve agent host (eve dev --no-ui), bound to localhost.
+# The eve agent host (eve start), bound to localhost.
 app_port: 3000
 # Postgres is published on this host port by docker-compose.yml (5544:5432).
 postgres_host_port: 5544

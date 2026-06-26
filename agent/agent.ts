@@ -20,7 +20,7 @@ export default defineAgent({
   // Self-hosted durability: back session state, queues, hooks, and streams
   // with the Postgres Workflow world instead of Vercel Workflow.
   // eve resolves this package's `createWorld()` export and calls `start()`
-  // automatically on host init (verified in eve 0.13.3 configure-world).
+  // automatically on host init (verified through eve 0.15.0 configure-world).
   // Credentials/options come from env (WORKFLOW_POSTGRES_URL), not here.
   experimental: {
     workflow: {

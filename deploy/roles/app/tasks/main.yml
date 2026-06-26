@@ -193,6 +193,22 @@
   environment: "{{ pnpm_env }}"
   changed_when: false
 
+# --- Build the agent ------------------------------------------------------
+# `eve start` (the production host) serves a prebuilt .output/, so compile the
+# agent before (re)starting the service. `eve build` emits standard Nitro output
+# (no .vercel/output). Restart the agent whenever the build runs so the running
+# host serves the fresh build.
+- name: Build the eve agent (eve build -> .output/)
+  ansible.builtin.command:
+    cmd: pnpm exec eve build
+    chdir: "{{ app_dir }}"
+  become: true
+  become_user: "{{ app_user }}"
+  environment: "{{ pnpm_env }}"
+  register: eve_build
+  changed_when: true
+  notify: Restart steve
+
 # --- systemd service ------------------------------------------------------
 - name: Install the steve systemd unit
   ansible.builtin.template:
@@ -211,3 +227,13 @@
     state: started
     daemon_reload: true
   become: true
+
+# `eve start` serves one fixed .output/ build. After a rebuild the running host
+# must be restarted to pick up the new build (a notify handler only fires when
+# the unit file changes, not when .output/ changes). Mirror the frontend role.
+- name: Restart steve to serve the fresh eve build
+  ansible.builtin.systemd:
+    name: steve
+    state: restarted
+  become: true
+  when: eve_build is changed

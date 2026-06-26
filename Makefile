@@ -31,9 +31,10 @@ db-migrate:
 build:
 	pnpm exec eve build
 
-# The long-running host. IMPORTANT: use `eve dev --no-ui`, NOT `eve start`.
-# In eve 0.13.3 only the dev host registers the configured world's queue
-# handler; `eve start` returns "Unhandled queue". See _internal/ISSUES.md.
+# The long-running host. Uses `eve dev --no-ui`. As of eve 0.15.0 `eve start`
+# also runs the configured Postgres world (the old "Unhandled queue" regression
+# is fixed), but only `eve dev` auto-reaps the per-run Docker sandbox containers
+# on shutdown; `eve start` leaves them running. See _internal/ISSUES.md.
 # Console logs are tee'd to ./logs/host.log for local inspection; the Observe
 # SDK also captures them as an OTel logs signal when OpenObserve is enabled.
 dev:

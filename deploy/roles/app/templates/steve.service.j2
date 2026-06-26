@@ -1,7 +1,10 @@
 # Managed by Ansible (app role).
-# Long-running eve host. Uses `eve dev --no-ui` (NOT `eve start`) because in
-# eve 0.13.3 only the dev host registers the custom Postgres world's queue
-# handler; `eve start` returns "Unhandled queue". See _internal/ISSUES.md.
+# Long-running eve host. Uses `eve start` (the production host). As of eve 0.15.0
+# `eve start` runs the custom Postgres world correctly (the old 0.13.x "Unhandled
+# queue" regression is fixed). `eve build` runs in the app role before this unit
+# starts, producing .output/ that `eve start` serves. Note: unlike `eve dev`,
+# `eve start` does NOT reap per-run Docker sandbox containers on shutdown — run an
+# external reaper if that matters for your deployment. See _internal/ISSUES.md.
 [Unit]
 Description=steve — self-hosted eve agent host
 After=network-online.target docker.service
@@ -28,7 +31,7 @@ Environment=PNPM_CONFIG_DANGEROUSLY_ALLOW_ALL_BUILDS=true
 ExecStartPre=/usr/bin/docker compose -f {{ app_dir }}/docker-compose.yml up -d postgres
 ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do docker exec steve-postgres pg_isready -U world -d world && exit 0; sleep 2; done; echo "postgres not ready" >&2; exit 1'
 # Bind to localhost only; Caddy is the sole public entry point.
-ExecStart=/usr/bin/pnpm exec eve dev --no-ui --host 127.0.0.1 --port {{ app_port }} --logs all
+ExecStart=/usr/bin/pnpm exec eve start --host 127.0.0.1 --port {{ app_port }}
 Restart=always
 RestartSec=5
 # Give the host time to pull the sandbox image on first boot.

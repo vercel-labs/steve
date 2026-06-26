@@ -16,7 +16,7 @@ response.
      ├─ status.eve.phil.bingo                  -> beszel-hub (127.0.0.1:8090)
      └─ jaeger.eve.phil.bingo (Basic auth)     -> jaeger     (127.0.0.1:16686)
 
-   steve.service       eve dev --no-ui   (127.0.0.1:3000)  [spawns sandboxes via Docker socket]
+   steve.service       eve start         (127.0.0.1:3000)  [spawns sandboxes via Docker socket]
    steve-web.service   next start        (127.0.0.1:3001)  [withEve + useEveAgent UI]
    docker: steve-postgres (127.0.0.1:5544), beszel-hub, beszel-agent,
            steve-jaeger (UI 127.0.0.1:16686, OTLP 127.0.0.1:4318)
@@ -28,8 +28,13 @@ response.
   Docker socket to spawn sandbox containers, so running it natively (rather than
   in a container that mounts the socket) is simpler and matches the verified
   local setup.
-- **`eve dev --no-ui`, not `eve start`**: in eve 0.13.3 only the dev host
-  registers the custom Postgres world's queue handler. See `_internal/ISSUES.md`.
+- **`eve start` (the production host)**: historically (eve 0.13.x) only `eve dev`
+  registered the custom Postgres world's queue handler, so this deploy used to run
+  `eve dev --no-ui`. **Fixed in eve 0.15.0** — `eve start` now runs the custom
+  world correctly, so the app role does `eve build` and the unit runs `eve start`.
+  Caveat: unlike `eve dev`, `eve start` does **not** reap per-run Docker sandbox
+  containers on shutdown; run an external reaper if that matters. See
+  `_internal/ISSUES.md`.
 - **Caddy path-routes the eve API straight to the agent**, and everything else
   to the Next UI. We deliberately do *not* use `withEve`'s production rewrite
   (`EVE_NEXT_PRODUCTION_ORIGIN`) to forward `/eve/v1/*`: that rewrite assumes the
@@ -142,12 +147,12 @@ At this point the site is reachable over **plain HTTP by IP** (no domain yet):
 
 ```bash
 curl http://<droplet-ip>/                    # the Next.js UI
-curl http://<droplet-ip>/eve/v1/health       # the agent API (use GET, not HEAD)
+curl http://<droplet-ip>/eve/v1/health       # the agent API
 curl -I http://<droplet-ip>/                 # -> x-hosted-on-vercel: false
 ```
 
-> Use `GET` for `/eve/v1/health`; eve 404s `HEAD` requests (so `curl -I` against
-> the health path shows 404 even when healthy). See `_internal/DX_NOTES.md`.
+> As of eve 0.15.0, `HEAD /eve/v1/health` returns `200` (it 404'd on 0.13.x), so
+> HEAD-based health/uptime probes work. See `_internal/DX_NOTES.md`.
 
 ## 5. Add your domain (when ready)
 
