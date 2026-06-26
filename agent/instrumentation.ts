@@ -2,8 +2,17 @@ import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
-import { observe } from "@open-observe/sdk";
 import { defineInstrumentation } from "eve/instrumentation";
+
+// `@open-observe/sdk` is only used for the LOCAL OpenObserve backend. It is a
+// `link:` dependency to a local checkout, so it is NOT present in production
+// (the droplet uses Jaeger). Import it lazily and only on the OpenObserve
+// branch so the built server (`eve start`) never tries to resolve it in prod.
+// The import is also guarded so a missing module fails open rather than
+// crashing the host. The spelled-out specifier in a variable keeps bundlers /
+// type-checkers from eagerly resolving it at build time on machines that don't
+// have the linked package.
+const OPEN_OBSERVE_SDK_MODULE = "@open-observe/sdk";
 
 // Observability with two interchangeable backends, selected purely by env so
 // the same code runs locally and in production with no edits:
@@ -30,15 +39,26 @@ export default defineInstrumentation({
   setup: async ({ agentName }) => {
     const openObserveEndpoint = process.env.OPEN_OBSERVE_OTLP_ENDPOINT;
     if (openObserveEndpoint) {
-      await observe({
-        serviceName: agentName,
-        projectId: process.env.OPEN_OBSERVE_PROJECT_ID ?? "steve",
-        otlp: {
-          traces: { endpoint: openObserveEndpoint },
-          logs: { endpoint: openObserveEndpoint },
-          metrics: { endpoint: openObserveEndpoint, exportIntervalMillis: 5000 },
-        },
-      });
+      try {
+        const mod: { observe: (opts: unknown) => Promise<unknown> } =
+          await import(/* @vite-ignore */ OPEN_OBSERVE_SDK_MODULE);
+        await mod.observe({
+          serviceName: agentName,
+          projectId: process.env.OPEN_OBSERVE_PROJECT_ID ?? "steve",
+          otlp: {
+            traces: { endpoint: openObserveEndpoint },
+            logs: { endpoint: openObserveEndpoint },
+            metrics: { endpoint: openObserveEndpoint, exportIntervalMillis: 5000 },
+          },
+        });
+      } catch (err) {
+        // Fail open: if the optional Observe SDK isn't installed, log and fall
+        // through to the Jaeger/OTLP branch (or no-op) rather than crashing.
+        console.warn(
+          "[steve] OPEN_OBSERVE_OTLP_ENDPOINT is set but @open-observe/sdk could not be loaded; skipping OpenObserve:",
+          err instanceof Error ? err.message : err,
+        );
+      }
       return;
     }
 
