@@ -102,15 +102,14 @@ Two pieces, both dead simple:
   during deploy. It's gitignored, so nothing secret is committed. Make sure it
   has a real `OPENAI_API_KEY`, a strong `ROUTE_AUTH_BASIC_PASSWORD`, and
   `WORKFLOW_QUEUE_NAMESPACE="eve"`.
-  > **Observability — important.** The local `.env` uses OpenObserve
-  > (`OPEN_OBSERVE_OTLP_ENDPOINT=http://localhost:3001`), and instrumentation
-  > prefers OpenObserve whenever that var is set. Since the `.env` is copied
-  > **verbatim**, before deploying you MUST edit the file you ship so prod uses
-  > Jaeger: **comment out / remove `OPEN_OBSERVE_OTLP_ENDPOINT`** and set
-  > **`OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"`**. Otherwise the
-  > deployed agent will try to reach a local-only OpenObserve dashboard that
-  > does not exist on the droplet, and no spans reach Jaeger. (A future deploy
-  > task could enforce this automatically; for now it's a manual step.)
+  > **Observability — important.** Set `OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"`
+  > in the `.env` you ship so prod traces reach the droplet's Jaeger. The
+  > OpenObserve path is now an opt-in **code toggle** in `agent/instrumentation.ts`
+  > (committed OFF), so a stray `OPEN_OBSERVE_OTLP_ENDPOINT` in the copied `.env`
+  > no longer hijacks prod telemetry — the agent only uses OpenObserve if that
+  > import is uncommented (which it must not be for a deploy, since the SDK is an
+  > unpublished local `link:`). Best practice is still to omit
+  > `OPEN_OBSERVE_OTLP_ENDPOINT` from the shipped `.env` for clarity.
 
 ## 2. Provision the droplet (once)
 

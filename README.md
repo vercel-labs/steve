@@ -138,16 +138,19 @@ make observe-web    # workflow web --backend @workflow/world-postgres  (browser 
 ### OpenTelemetry traces: OpenObserve (local) or Jaeger (prod)
 
 eve's trace spans (`ai.eve.turn` -> `ai.streamText` -> `ai.toolCall`) are
-exported over OTLP/HTTP by `agent/instrumentation.ts`. It selects the backend
-from env — no code changes between local and production:
+exported over OTLP/HTTP by `agent/instrumentation.ts`:
 
-- **OpenObserve** (local default): if `OPEN_OBSERVE_OTLP_ENDPOINT` is set,
-  `@open-observe/sdk`'s `observe(...)` exports **traces, logs, and metrics** to
-  a local Observe dashboard. This takes precedence over Jaeger.
-- **Jaeger** (production default): if `OPEN_OBSERVE_OTLP_ENDPOINT` is unset and
-  `OTEL_EXPORTER_OTLP_ENDPOINT` is set, vanilla OpenTelemetry exports trace
-  spans to a self-hosted Jaeger.
-- Neither set: telemetry export is disabled (fail-open); the agent still runs.
+- **Jaeger** (default, prod): if `OTEL_EXPORTER_OTLP_ENDPOINT` is set, vanilla
+  OpenTelemetry exports trace spans to a self-hosted Jaeger. This is the
+  committed default and needs no code changes.
+- **OpenObserve** (local, opt-in): exports **traces, logs, and metrics** to a
+  local Observe dashboard via `@open-observe/sdk`. Because that SDK is **not
+  published to npm** (it's a local `link:` checkout shipping raw TS), the import
+  is a **manual comment/uncomment toggle** in `agent/instrumentation.ts` rather
+  than env-only — the committed default keeps it disabled so `eve start` /
+  `next build` never reference the unpublished package. When enabled (and
+  `OPEN_OBSERVE_OTLP_ENDPOINT` set) it takes precedence over Jaeger.
+- Neither configured: telemetry export is disabled (fail-open); the agent runs.
 
 **Local (OpenObserve):**
 
@@ -155,7 +158,11 @@ from env — no code changes between local and production:
 # In the openobserve checkout — start the dashboard (OTLP ingest + UI on :3001):
 pnpm --filter @open-observe/dashboard dev
 
-# In this repo — .env sets OPEN_OBSERVE_OTLP_ENDPOINT=http://localhost:3001
+# In this repo:
+#   1. In agent/instrumentation.ts, flip the OpenObserve toggle ON
+#      (comment the prod-safe `resolveObserve = () => undefined` line and
+#       uncomment the `import { observe }` + observe-returning line below it).
+#   2. .env sets OPEN_OBSERVE_OTLP_ENDPOINT=http://localhost:3001
 make dev
 make session      # drive a run, then explore at http://localhost:3001/p/steve
 ```

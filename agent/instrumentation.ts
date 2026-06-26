@@ -4,61 +4,69 @@ import { NodeSDK } from "@opentelemetry/sdk-node";
 import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
 import { defineInstrumentation } from "eve/instrumentation";
 
-// `@open-observe/sdk` is only used for the LOCAL OpenObserve backend. It is a
-// `link:` dependency to a local checkout, so it is NOT present in production
-// (the droplet uses Jaeger). Import it lazily and only on the OpenObserve
-// branch so the built server (`eve start`) never tries to resolve it in prod.
-// The import is also guarded so a missing module fails open rather than
-// crashing the host. The spelled-out specifier in a variable keeps bundlers /
-// type-checkers from eagerly resolving it at build time on machines that don't
-// have the linked package.
-const OPEN_OBSERVE_SDK_MODULE = "@open-observe/sdk";
-
-// Observability with two interchangeable backends, selected purely by env so
-// the same code runs locally and in production with no edits:
+// ───────────────────────────────────────────────────────────────────────────
+// LOCAL OpenObserve toggle.
 //
-//   1. Observe SDK -> local dashboard (dev default). Active when
-//      OPEN_OBSERVE_OTLP_ENDPOINT is set. observe(...) registers its own OTel
-//      providers, captures traces + logs + metrics, installs the AI SDK /
-//      Workflow / Sandbox adapters, and ships everything to the local Observe
-//      dashboard's OTLP ingest. Run it from the openobserve checkout:
+// `@open-observe/sdk` is a `link:` dependency to a local checkout and is NOT
+// published to npm, so it is NOT present in production (the droplet uses Jaeger).
+// It also ships raw TS, so it only loads when transpiled by eve's dev loader /
+// the bundler — a plain `eve start` / `next build` on a box without the linked
+// package would fail to resolve it.
+//
+// To use OpenObserve LOCALLY:
+//   1. Comment out the committed `const resolveObserve = () => undefined;` line.
+//   2. Uncomment the `import { observe }` + the `resolveObserve = ... observe`
+//      lines just below it.
+// Then set OPEN_OBSERVE_OTLP_ENDPOINT in .env. Reverse both to return to the
+// committed (prod-safe) default, which never references the unpublished SDK.
+
+type ObserveFn = (opts: unknown) => Promise<unknown>;
+
+// --- PROD-SAFE DEFAULT (committed): OpenObserve disabled --------------------
+const resolveObserve = (): ObserveFn | undefined => undefined;
+
+// --- LOCAL OpenObserve (uncomment the import + swap resolveObserve below) ---
+// import { observe } from "@open-observe/sdk";
+// const resolveObserve = (): ObserveFn | undefined => observe as unknown as ObserveFn;
+// ───────────────────────────────────────────────────────────────────────────
+
+const OBSERVE: ObserveFn | undefined = resolveObserve();
+
+// Observability with two interchangeable backends. Jaeger is env-only; the
+// OpenObserve path additionally requires the import toggle above (since its SDK
+// is an unpublished local link:). The committed default is Jaeger-or-nothing:
+//
+//   1. Observe SDK -> local dashboard. Active when the `observe` import above is
+//      uncommented AND OPEN_OBSERVE_OTLP_ENDPOINT is set. observe(...) registers
+//      its own OTel providers, captures traces + logs + metrics, installs the
+//      AI SDK / Workflow / Sandbox adapters, and ships everything to the local
+//      Observe dashboard's OTLP ingest. Run it from the openobserve checkout:
 //        pnpm --filter @open-observe/dashboard dev
 //      then open http://localhost:3001/p/<projectId>.
 //
-//   2. Vanilla OTel -> self-hosted Jaeger (production). Active when
-//      OPEN_OBSERVE_OTLP_ENDPOINT is unset and OTEL_EXPORTER_OTLP_ENDPOINT is
-//      set (e.g. http://localhost:4318). Exports eve's AI SDK trace spans
+//   2. Vanilla OTel -> self-hosted Jaeger (production). Active when the
+//      OpenObserve path is not taken and OTEL_EXPORTER_OTLP_ENDPOINT is set
+//      (e.g. http://localhost:4318). Exports eve's AI SDK trace spans
 //      (ai.eve.turn -> ai.streamText -> ai.toolCall) over OTLP/HTTP to Jaeger.
 //      This is the deployed droplet's path; the deploy sets the OTEL endpoint
 //      and leaves OPEN_OBSERVE_OTLP_ENDPOINT unset.
 //
 // If neither is configured, telemetry export is disabled and the agent runs
 // normally (fail-open). The two backends are mutually exclusive: OpenObserve
-// wins when its endpoint is set, so a dev box never accidentally double-exports.
+// wins when available, so a dev box never accidentally double-exports.
 export default defineInstrumentation({
   setup: async ({ agentName }) => {
     const openObserveEndpoint = process.env.OPEN_OBSERVE_OTLP_ENDPOINT;
-    if (openObserveEndpoint) {
-      try {
-        const mod: { observe: (opts: unknown) => Promise<unknown> } =
-          await import(/* @vite-ignore */ OPEN_OBSERVE_SDK_MODULE);
-        await mod.observe({
-          serviceName: agentName,
-          projectId: process.env.OPEN_OBSERVE_PROJECT_ID ?? "steve",
-          otlp: {
-            traces: { endpoint: openObserveEndpoint },
-            logs: { endpoint: openObserveEndpoint },
-            metrics: { endpoint: openObserveEndpoint, exportIntervalMillis: 5000 },
-          },
-        });
-      } catch (err) {
-        // Fail open: if the optional Observe SDK isn't installed, log and fall
-        // through to the Jaeger/OTLP branch (or no-op) rather than crashing.
-        console.warn(
-          "[steve] OPEN_OBSERVE_OTLP_ENDPOINT is set but @open-observe/sdk could not be loaded; skipping OpenObserve:",
-          err instanceof Error ? err.message : err,
-        );
-      }
+    if (OBSERVE && openObserveEndpoint) {
+      await OBSERVE({
+        serviceName: agentName,
+        projectId: process.env.OPEN_OBSERVE_PROJECT_ID ?? "steve",
+        otlp: {
+          traces: { endpoint: openObserveEndpoint },
+          logs: { endpoint: openObserveEndpoint },
+          metrics: { endpoint: openObserveEndpoint, exportIntervalMillis: 5000 },
+        },
+      });
       return;
     }
 
