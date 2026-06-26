@@ -7,8 +7,10 @@ runs **end to end with zero Vercel-proprietary infrastructure**:
   (`@workflow/world-postgres`), not Vercel Workflow.
 - **Code isolation** comes from a **Docker sandbox**, not Vercel Sandbox.
 - **Model calls** go **directly to OpenAI**, not through the AI Gateway.
-- **Observability** comes from the **Workflow CLI** + self-hosted **Jaeger**
-  (OpenTelemetry traces; Axiom optional), not the Vercel Agent Runs dashboard.
+- **Observability** comes from the **Workflow CLI** + OpenTelemetry traces,
+  not the Vercel Agent Runs dashboard. Locally, traces/logs/metrics go to a
+  local **Observe dashboard** (`@open-observe/sdk`); in production they go to a
+  self-hosted **Jaeger**. The backend is chosen by env (see below).
 
 The agent is a durable, multi-step **data analyst**: given a request it
 (1) generates a synthetic dataset, (2) analyzes it, and (3) summarizes the
@@ -128,60 +130,45 @@ make observe        # workflow inspect runs --backend @workflow/world-postgres
 make observe-web    # workflow web --backend @workflow/world-postgres  (browser UI)
 ```
 
-### OpenTelemetry traces -> Jaeger (default)
+### OpenTelemetry traces: OpenObserve (local) or Jaeger (prod)
 
 eve's trace spans (`ai.eve.turn` -> `ai.streamText` -> `ai.toolCall`) are
-exported over OTLP/HTTP by `agent/instrumentation.ts`. The default destination is
-a self-hosted **Jaeger**:
+exported over OTLP/HTTP by `agent/instrumentation.ts`. It selects the backend
+from env — no code changes between local and production:
+
+- **OpenObserve** (local default): if `OPEN_OBSERVE_OTLP_ENDPOINT` is set,
+  `@open-observe/sdk`'s `observe(...)` exports **traces, logs, and metrics** to
+  a local Observe dashboard. This takes precedence over Jaeger.
+- **Jaeger** (production default): if `OPEN_OBSERVE_OTLP_ENDPOINT` is unset and
+  `OTEL_EXPORTER_OTLP_ENDPOINT` is set, vanilla OpenTelemetry exports trace
+  spans to a self-hosted Jaeger.
+- Neither set: telemetry export is disabled (fail-open); the agent still runs.
+
+**Local (OpenObserve):**
+
+```bash
+# In the openobserve checkout — start the dashboard (OTLP ingest + UI on :3001):
+pnpm --filter @open-observe/dashboard dev
+
+# In this repo — .env sets OPEN_OBSERVE_OTLP_ENDPOINT=http://localhost:3001
+make dev
+make session      # drive a run, then explore at http://localhost:3001/p/steve
+```
+
+**Local (Jaeger), to mirror production:** comment out `OPEN_OBSERVE_OTLP_ENDPOINT`
+in `.env` and set `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`, then:
 
 ```bash
 docker compose --profile observability up -d jaeger
-# .env ships traces to it via OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
-make dev          # (restart if it was already running)
-make session      # drive a run, then explore the spans:
-# traces at http://localhost:16686
+make dev
+make session      # spans at http://localhost:16686
 ```
 
 On the deployed droplet Jaeger runs in Docker and its UI is exposed publicly at
 **`https://jaeger.eve.phil.bingo`** behind Caddy with HTTP Basic auth, so the
-spans can be demoed in a browser. See [`deploy/README.md`](./deploy/README.md).
-
-### Optional: send traces and logs to Axiom
-
-For external/cloud visibility instead of Jaeger, ship both signals to
-[Axiom](https://axiom.co) — into a single dataset (named `steve` here, fine for
-the free plan):
-
-- **Traces** (eve's `ai.eve.turn` / model-call / tool-call spans) are exported
-  by `agent/instrumentation.ts` directly over OTLP/HTTP.
-- **Console logs** (the eve host's stdout/stderr) are shipped by a **Vector**
-  sidecar that tails `./logs/host.log`. eve emits no OTel logs signal, so logs
-  are collected at the process level rather than through instrumentation.
-
-Setup:
-
-1. In Axiom, create a dataset (e.g. `steve`) and an API token with ingest
-   permission on it.
-2. In `.env`, set:
-   ```bash
-   AXIOM_TOKEN="xaat-..."
-   AXIOM_DATASET="steve"          # optional, defaults to "steve"
-   AXIOM_DOMAIN="api.axiom.co"    # optional, or api.eu.axiom.co
-   ```
-   (Setting `AXIOM_TOKEN` takes precedence over the Jaeger `OTEL_*` path, so
-   comment it out to fall back to Jaeger.)
-3. Run the agent and the log shipper:
-   ```bash
-   make dev          # writes logs to ./logs/host.log
-   make logs-up      # starts the Vector sidecar -> Axiom (in another terminal)
-   ```
-4. Drive a session (`make session`) and view traces + logs in the Axiom `steve`
-   dataset. Logs are tagged `source: eve-host` to distinguish them from spans.
-
-> Single dataset works because traces arrive via OTLP and logs via Vector's
-> `axiom` sink; on a paid plan you can split them into `steve-traces` /
-> `steve-logs`. For a fully containerized VPS deployment, switch `vector.toml`'s
-> `file` source to a `docker_logs` source instead of tailing a file.
+spans can be demoed in a browser. The deploy sets `OTEL_EXPORTER_OTLP_ENDPOINT`
+and leaves `OPEN_OBSERVE_OTLP_ENDPOINT` unset, so production uses Jaeger. See
+[`deploy/README.md`](./deploy/README.md).
 
 ## The three proofs
 
@@ -283,14 +270,13 @@ agent/
   channels/eve.ts          HTTP channel, auth = [none()] (public, PoC) — see deploy notes
   sandbox/sandbox.ts        Docker backend, deny-all egress
   tools/run_python.ts      executes Python in the sandbox -> {stdout,stderr,exitCode}
-  instrumentation.ts       OTel traces -> Jaeger or Axiom (optional)
+  instrumentation.ts       OTel traces -> OpenObserve (local) or Jaeger (prod)
 app/, components/, lib/    Next.js chat UI (withEve + useEveAgent)
-next.config.ts             withEve(); Turbopack node:module stub workaround
+next.config.ts             withEve(); transpilePackages @open-observe/sdk; node:module stub
 deploy/                    Ansible: provision + harden + deploy agent, UI, Beszel, Caddy
   README.md                full deploy runbook; roles/ for each component
-vector.toml                Vector: tail host logs -> Axiom (optional)
-docker-compose.yml         postgres:16 (+ jaeger `observability` / vector `logs` profiles)
-Makefile                   db-up, db-migrate, dev, observe, logs-up, proof-* targets
+docker-compose.yml         postgres:16 (+ jaeger `observability` profile)
+Makefile                   db-up, db-migrate, dev, observe, proof-* targets
 .env.example
 PROOF.md                   the three proofs, step by step
 _internal/                 PLAN.md, ISSUES.md, DX_NOTES.md (notes for the eve team)

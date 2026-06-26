@@ -47,12 +47,13 @@ response.
   credentials. Lock it down by switching `agent/channels/eve.ts` back to
   `[localDev(), httpBasic({...})]` (and front the UI with an auth-injecting
   route). See `_internal/DX_NOTES.md` for the auth trade-offs.
-- **Jaeger over Axiom for the demo**: traces go to a self-hosted Jaeger on the
+- **Self-hosted Jaeger for tracing**: traces go to a self-hosted Jaeger on the
   droplet (vanilla OpenTelemetry, no SaaS) whose UI is exposed publicly behind
   Caddy with HTTP Basic auth, so the `ai.eve.turn` span tree can be shown live in
   a browser. Both Jaeger UI and OTLP receiver bind to `127.0.0.1`; only Caddy is
-  internet-facing. Axiom remains available by setting `AXIOM_TOKEN` (it takes
-  precedence over the Jaeger OTLP endpoint).
+  internet-facing. Production uses Jaeger because the deployed `.env` sets
+  `OTEL_EXPORTER_OTLP_ENDPOINT` and leaves `OPEN_OBSERVE_OTLP_ENDPOINT` unset
+  (the local-only OpenObserve dashboard is not deployed).
 
 ## Prerequisites (on your machine)
 
@@ -96,6 +97,15 @@ Two pieces, both dead simple:
   during deploy. It's gitignored, so nothing secret is committed. Make sure it
   has a real `OPENAI_API_KEY`, a strong `ROUTE_AUTH_BASIC_PASSWORD`, and
   `WORKFLOW_QUEUE_NAMESPACE="eve"`.
+  > **Observability — important.** The local `.env` uses OpenObserve
+  > (`OPEN_OBSERVE_OTLP_ENDPOINT=http://localhost:3001`), and instrumentation
+  > prefers OpenObserve whenever that var is set. Since the `.env` is copied
+  > **verbatim**, before deploying you MUST edit the file you ship so prod uses
+  > Jaeger: **comment out / remove `OPEN_OBSERVE_OTLP_ENDPOINT`** and set
+  > **`OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"`**. Otherwise the
+  > deployed agent will try to reach a local-only OpenObserve dashboard that
+  > does not exist on the droplet, and no spans reach Jaeger. (A future deploy
+  > task could enforce this automatically; for now it's a manual step.)
 
 ## 2. Provision the droplet (once)
 
@@ -185,8 +195,9 @@ curl -I http://<droplet-ip>/                 # -> x-hosted-on-vercel: false
    > setup). The `beszel_agent_key` is a public key and safe to commit.
 5. **Jaeger tracing.** Jaeger all-in-one is deployed automatically and the agent
    ships its OpenTelemetry spans to it (the rsynced `.env` sets
-   `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`; leave `AXIOM_TOKEN` unset,
-   as it takes precedence). The UI is exposed at `https://jaeger.eve.phil.bingo`
+   `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` and leaves
+   `OPEN_OBSERVE_OTLP_ENDPOINT` unset, so instrumentation selects the Jaeger
+   path). The UI is exposed at `https://jaeger.eve.phil.bingo`
    behind Caddy with HTTP Basic auth:
    ```yaml
    jaeger_basic_auth_user: "eve"

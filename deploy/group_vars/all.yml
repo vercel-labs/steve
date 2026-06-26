@@ -85,9 +85,10 @@ beszel_hub_url: "https://status.eve.phil.bingo"
 # --- Tracing (Jaeger) -----------------------------------------------------
 # Jaeger runs on this droplet via Docker and receives eve's OpenTelemetry trace
 # spans over OTLP/HTTP. The agent exports to it when the deployed .env sets
-# OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318" (and leaves AXIOM_TOKEN
-# unset — Axiom takes precedence). The UI is exposed publicly at jaeger_domain
-# behind Caddy with HTTP Basic auth so anyone can browse the spans for a demo.
+# OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318" and leaves
+# OPEN_OBSERVE_OTLP_ENDPOINT unset (OpenObserve, the local-only dashboard, takes
+# precedence when set, so it must stay unset in prod). The UI is exposed publicly
+# at jaeger_domain behind Caddy with HTTP Basic auth so anyone can browse spans.
 jaeger_enabled: true
 jaeger_dir: "/opt/jaeger"
 # Jaeger all-in-one UI (bound to localhost; Caddy terminates TLS + adds auth).
