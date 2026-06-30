@@ -15,8 +15,8 @@ import { MOVIES_CSV } from "./movies";
 //
 // NOTE: the policy is set on the factory rather than in onSession's use()
 // because of a type-declaration bug (still present in eve 0.15.0) where docker()
-// drops its session-use option types (see _internal/ISSUES.md). The factory is
-// correctly typed and applies the policy at container creation.
+// drops its session-use option types. The factory is correctly typed and
+// applies the policy at container creation.
 export default defineSandbox({
   backend: docker({
     image: "ghcr.io/vercel/eve:latest",

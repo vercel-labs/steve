@@ -1,7 +1,7 @@
 # steve — a fully self-hosted eve agent
 
-A proof of concept that Vercel's [`eve`](https://opencode.ai) agent framework
-runs **end to end with zero Vercel-proprietary infrastructure**:
+A proof of concept that Vercel's `eve` agent framework runs **end to end with
+zero Vercel-proprietary infrastructure**:
 
 - **Durability** comes from a self-hosted **Postgres Workflow world**
   (`@workflow/world-postgres`), not Vercel Workflow.
@@ -201,7 +201,7 @@ runs on the droplet:
 
 | Component | What it is | Where |
 | --- | --- | --- |
-| **eve agent** | the durable data-analyst host (`eve dev --no-ui`), native under systemd | `127.0.0.1:3000` (`steve.service`) |
+| **eve agent** | the durable data-analyst host (`eve start`), native under systemd | `127.0.0.1:3000` (`steve.service`) |
 | **Next.js UI** | a chat front-end (`withEve` + `useEveAgent`), native under systemd | `127.0.0.1:3001` (`steve-web.service`) |
 | **Postgres** | the durable Workflow world (Docker) | `127.0.0.1:5544` (`steve-postgres`) |
 | **Docker sandbox** | per-run isolated containers the agent spawns via the Docker socket | ephemeral |
@@ -241,20 +241,21 @@ Highlights of the pipeline (full detail in [`deploy/README.md`](./deploy/README.
   `.env` is copied up (PoC-simple, no vault).
 - **Caddy** path-routes the eve API straight to the agent and everything else to
   the UI — deliberately *not* using `withEve`'s production rewrite, which
-  double-prefixes paths for a separate-origin agent (see `_internal/DX_NOTES.md`).
+  double-prefixes paths for a separate-origin agent (see `deploy/README.md`).
 - **Auth:** the agent is **public (`none()`)** so the UI works without
   credentials — a PoC choice. Swap `agent/channels/eve.ts` back to
   `[localDev(), httpBasic({...})]` to lock it down.
 
-> Why `eve dev --no-ui` rather than `eve start`? Historically (eve 0.13.x) only
-> the dev host registered the custom Postgres world's queue handler; `eve start`
-> returned "Unhandled queue". **This is fixed as of eve 0.15.0** — `eve start`
-> now runs the custom world. We still use `eve dev` because only it auto-reaps
-> the per-run Docker sandbox containers on shutdown. See `_internal/ISSUES.md`.
+> The production host runs `eve start` (with `eve build` ahead of it).
+> Historically (eve 0.13.x) only `eve dev` registered the custom Postgres world's
+> queue handler, so this used to run `eve dev --no-ui`; **that regression is
+> fixed as of eve 0.15.0** and `eve start` now runs the custom world end to end.
+> One caveat: unlike `eve dev`, `eve start` does not auto-reap the per-run Docker
+> sandbox containers on shutdown, so run an external reaper if that matters.
 
 ## Gotchas (discrepancies from the naive setup)
 
-These were discovered while building; full detail in `_internal/ISSUES.md`.
+These were discovered while building.
 
 1. **`@workflow/world-postgres@latest` (4.2.0) is incompatible.** Its event schema
    lacks the `attr_set` event eve emits, so runs fail mid-replay with a `ZodError`
@@ -298,5 +299,4 @@ docker-compose.yml         postgres:16 (+ jaeger `observability` profile)
 Makefile                   db-up, db-migrate, dev, observe, proof-* targets
 .env.example
 PROOF.md                   the three proofs, step by step
-_internal/                 PLAN.md, ISSUES.md, DX_NOTES.md (notes for the eve team)
 ```

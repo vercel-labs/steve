@@ -8,7 +8,7 @@ Docker; Caddy terminates TLS and injects `x-hosted-on-vercel: false` on every
 response.
 
 ```
-你 (laptop)  --ssh-->  droplet
+you (laptop)  --ssh-->  droplet
    caddy  :80/:443  (public, TLS, header inject)
      ├─ eve.phil.bingo
      │     ├─ /eve/*, /.well-known/workflow/*  -> steve     (127.0.0.1:3000)
@@ -33,8 +33,7 @@ response.
   `eve dev --no-ui`. **Fixed in eve 0.15.0** — `eve start` now runs the custom
   world correctly, so the app role does `eve build` and the unit runs `eve start`.
   Caveat: unlike `eve dev`, `eve start` does **not** reap per-run Docker sandbox
-  containers on shutdown; run an external reaper if that matters. See
-  `_internal/ISSUES.md`.
+  containers on shutdown; run an external reaper if that matters.
 - **Caddy path-routes the eve API straight to the agent**, and everything else
   to the Next UI. We deliberately do *not* use `withEve`'s production rewrite
   (`EVE_NEXT_PRODUCTION_ORIGIN`) to forward `/eve/v1/*`: that rewrite assumes the
@@ -51,7 +50,7 @@ response.
 - **Agent is public (`none()` auth) for the PoC** so the UI works without
   credentials. Lock it down by switching `agent/channels/eve.ts` back to
   `[localDev(), httpBasic({...})]` (and front the UI with an auth-injecting
-  route). See `_internal/DX_NOTES.md` for the auth trade-offs.
+  route).
 - **Self-hosted Jaeger for tracing**: traces go to a self-hosted Jaeger on the
   droplet (vanilla OpenTelemetry, no SaaS) whose UI is exposed publicly behind
   Caddy with HTTP Basic auth, so the `ai.eve.turn` span tree can be shown live in
@@ -151,7 +150,7 @@ curl -I http://<droplet-ip>/                 # -> x-hosted-on-vercel: false
 ```
 
 > As of eve 0.15.0, `HEAD /eve/v1/health` returns `200` (it 404'd on 0.13.x), so
-> HEAD-based health/uptime probes work. See `_internal/DX_NOTES.md`.
+> HEAD-based health/uptime probes work.
 
 ## 5. Add your domain (when ready)
 

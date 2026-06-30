@@ -4,7 +4,7 @@
 # queue" regression is fixed). `eve build` runs in the app role before this unit
 # starts, producing .output/ that `eve start` serves. Note: unlike `eve dev`,
 # `eve start` does NOT reap per-run Docker sandbox containers on shutdown — run an
-# external reaper if that matters for your deployment. See _internal/ISSUES.md.
+# external reaper if that matters for your deployment.
 [Unit]
 Description=steve — self-hosted eve agent host
 After=network-online.target docker.service
