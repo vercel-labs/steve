@@ -89,13 +89,29 @@ ansible-galaxy collection install -r requirements.yml -p ./.galaxy
 
 ## 1. Secrets (PoC-simple — no vault)
 
-Two pieces, both dead simple:
+Three pieces, all dead simple:
 
 - **DigitalOcean API token** — export it before provisioning:
   ```bash
   export DO_API_TOKEN="dop_v1_..."
   ```
   (Or pass `-e do_api_token=...` on the provision command.)
+- **Monitoring & tracing auth (deploy-time)** — the Beszel agent token and the
+  Jaeger UI Basic-auth credentials are read from your shell environment at deploy
+  time (just like `DO_API_TOKEN`), so they're no longer baked into
+  `group_vars/all.yml`. Export whichever you use before `ansible-playbook deploy.yml`:
+  ```bash
+  # Beszel: the agent token from the hub's "Add System" flow (see step 4).
+  export BESZEL_AGENT_TOKEN="25d09c13-7c39-432f-8864-7f6f84a4a334"
+  # Jaeger UI Basic auth. USER defaults to `eve`; HASH is a bcrypt hash
+  # (caddy hash-password --plaintext '<password>'). Unset HASH => no auth.
+  # Single-quote the hash so the shell doesn't expand its `$` segments.
+  export JAEGER_BASIC_AUTH_USER="eve"
+  export JAEGER_BASIC_AUTH_HASH='$2a$14$bJVPqzWhGCf0.G/T9MC6peaH5BckzStlmz3PMl/Q8hhzf0eTgOjRC'
+  ```
+  Nothing sensitive here — the demo login stays `eve` / `justshipthings`, so reuse
+  the values above if you just want the demo working. They're also listed
+  (commented) in `../.env.example` for discoverability.
 - **App runtime secrets** — your existing repo-root `../.env` (the same file
   `make dev` uses) is rsynced verbatim to `/opt/steve/.env` on the droplet
   during deploy. It's gitignored, so nothing secret is committed. Make sure it
@@ -181,39 +197,46 @@ curl -I http://<droplet-ip>/                 # -> x-hosted-on-vercel: false
    1. Open `https://status.eve.phil.bingo/` and create the admin account.
    2. **Add System** with host `127.0.0.1` and port `45876`. The hub shows a
       public **key** (and the agent uses a **token** for the WebSocket handshake).
-   3. Put both into `group_vars/all.yml` and re-run deploy:
+   3. Put the public key into `group_vars/all.yml`, export the token, and re-run
+      deploy:
       ```yaml
+      # group_vars/all.yml — the key is a public key, safe to commit
       beszel_agent_key: "ssh-ed25519 AAAA..."
-      beszel_agent_token: "<uuid-from-add-system>"
       beszel_hub_url: "https://status.eve.phil.bingo"
       ```
       ```bash
+      export BESZEL_AGENT_TOKEN="<uuid-from-add-system>"   # shared secret, not committed
       ansible-playbook deploy.yml
       ```
    The agent then logs `WebSocket connected host=status.eve.phil.bingo` and the
    dashboard shows live CPU / memory / disk / network / Docker metrics.
 
-   > Note: `beszel_agent_token` is a shared secret committed in plaintext in
-   > `group_vars/all.yml` (PoC convenience, consistent with the rest of this
-   > setup). The `beszel_agent_key` is a public key and safe to commit.
+   > Note: `beszel_agent_token` is a shared secret, so it's read from the
+   > `BESZEL_AGENT_TOKEN` environment variable at deploy time rather than
+   > committed to `group_vars/all.yml`. Leave it unset and the agent just runs
+   > unregistered until you export it. The `beszel_agent_key` is a public key and
+   > safe to commit.
 5. **Jaeger tracing.** Jaeger all-in-one is deployed automatically and the agent
    ships its OpenTelemetry spans to it (the rsynced `.env` sets
    `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` and leaves
    `OPEN_OBSERVE_OTLP_ENDPOINT` unset, so instrumentation selects the Jaeger
-   path). The UI is exposed at `https://jaeger.eve.phil.bingo`
-   behind Caddy with HTTP Basic auth:
-   ```yaml
-   jaeger_basic_auth_user: "eve"
+   path).    The UI is exposed at `https://jaeger.eve.phil.bingo`
+   behind Caddy with HTTP Basic auth. The credentials come from the environment
+   at deploy time (export before `ansible-playbook deploy.yml`):
+   ```bash
+   export JAEGER_BASIC_AUTH_USER="eve"    # defaults to `eve` if unset
    # bcrypt hash; regenerate with: caddy hash-password --plaintext '<password>'
-   jaeger_basic_auth_hash: "$2a$14$..."
+   # single-quote it so the shell doesn't expand the `$` segments
+   export JAEGER_BASIC_AUTH_HASH='$2a$14$bJVPqzWhGCf0.G/T9MC6peaH5BckzStlmz3PMl/Q8hhzf0eTgOjRC'
    ```
    Drive a session in the UI, then open the Jaeger UI, pick service `steve`, and
    explore the `ai.eve.turn -> ai.streamText -> ai.toolCall` span tree.
 
-   > The default demo login is `eve` / `justshipthings`. Change the password by
-   > generating a new bcrypt hash and re-running deploy. Trace payloads can
-   > include prompts and tool args, so don't leave the default in place for
-   > anything sensitive.
+   > The default demo login is `eve` / `justshipthings` (the hash above). Change
+   > the password by generating a new bcrypt hash and re-exporting
+   > `JAEGER_BASIC_AUTH_HASH`. If you leave `JAEGER_BASIC_AUTH_HASH` unset, the
+   > Jaeger UI is served **without** Basic auth. Trace payloads can include prompts
+   > and tool args, so don't expose it unauthenticated for anything sensitive.
 
 ## Redeploying new changes
 

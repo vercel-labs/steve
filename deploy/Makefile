@@ -3,6 +3,10 @@
 # Prereqs:
 #   export DO_API_TOKEN=dop_v1_...      # DigitalOcean API token
 #   a populated ../.env                 # copied to the droplet as runtime env
+# Optional deploy-time auth (see README.md; demo values in ../.env.example):
+#   export BESZEL_AGENT_TOKEN=...                 # Beszel agent token (from the hub)
+#   export JAEGER_BASIC_AUTH_USER=eve             # Jaeger UI Basic auth user
+#   export JAEGER_BASIC_AUTH_HASH='$2a$14$...'    # Jaeger UI Basic auth bcrypt hash
 #
 # Typical first run:  make deps && make provision && make bootstrap && make deploy
 # Redeploy new code:  make deploy   (optionally: make deploy REF=my-branch)

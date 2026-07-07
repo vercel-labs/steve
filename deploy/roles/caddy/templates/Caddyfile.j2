@@ -45,11 +45,15 @@
 
 {% if jaeger_enabled | default(false) and jaeger_domain | default('') | length > 0 %}
 # --- Trace UI (Jaeger) — HTTP Basic auth in front of the public dashboard ---
+# The credentials come from JAEGER_BASIC_AUTH_USER / JAEGER_BASIC_AUTH_HASH at
+# deploy time. If no hash is set the UI is served without auth (see deploy/README.md).
 {{ jaeger_domain }} {
 	header >X-Hosted-On-Vercel "false"
+{% if jaeger_basic_auth_hash | default('') | length > 0 %}
 	basic_auth {
 		{{ jaeger_basic_auth_user }} {{ jaeger_basic_auth_hash }}
 	}
+{% endif %}
 	reverse_proxy 127.0.0.1:{{ jaeger_ui_port }}
 }
 {% endif %}

@@ -66,7 +66,10 @@
                if (monitoring_enabled | default(false) and (monitoring_domain | default('') | length > 0))
                else 'Monitoring: disabled or not exposed' }}
           - >-
-            {{ ('Traces: https://' + jaeger_domain + '/  (Jaeger; Basic auth user ' + jaeger_basic_auth_user + ')')
+            {{ ('Traces: https://' + jaeger_domain + '/  (Jaeger; '
+                + ('Basic auth user ' + jaeger_basic_auth_user
+                   if (jaeger_basic_auth_hash | default('') | length > 0)
+                   else 'no Basic auth — set JAEGER_BASIC_AUTH_HASH to enable') + ')')
                if (jaeger_enabled | default(false) and (jaeger_domain | default('') | length > 0))
                else 'Traces: Jaeger disabled or not exposed' }}
           - "Header check: curl -I returns 'x-hosted-on-vercel: false'."

@@ -227,6 +227,10 @@ make the "not on Vercel" claim self-evident.
 ```bash
 cd deploy
 export DO_API_TOKEN=dop_v1_...
+# Optional deploy-time auth (demo values also in .env.example); see deploy/README.md:
+#   export BESZEL_AGENT_TOKEN=...              # Beszel agent token from the hub
+#   export JAEGER_BASIC_AUTH_USER=eve          # Jaeger UI Basic auth (user defaults to eve)
+#   export JAEGER_BASIC_AUTH_HASH='$2a$14$...' # bcrypt hash of the Jaeger password
 make deps && make all          # provision -> harden -> deploy
 make deploy                    # redeploy latest (idempotent)
 make status / make logs        # operate the droplet
@@ -245,6 +249,11 @@ Highlights of the pipeline (full detail in [`deploy/README.md`](./deploy/README.
 - **Auth:** the agent is **public (`none()`)** so the UI works without
   credentials — a PoC choice. Swap `agent/channels/eve.ts` back to
   `[localDev(), httpBasic({...})]` to lock it down.
+- **Monitoring/tracing auth:** the Beszel agent token and Jaeger UI Basic-auth
+  are read from deploy-time env vars (`BESZEL_AGENT_TOKEN`,
+  `JAEGER_BASIC_AUTH_USER`, `JAEGER_BASIC_AUTH_HASH`) rather than committed to
+  `group_vars/all.yml`. The demo login stays `eve` / `justshipthings` — see
+  `deploy/README.md` and `.env.example`.
 
 > The production host runs `eve start` (with `eve build` ahead of it).
 > Historically (eve 0.13.x) only `eve dev` registered the custom Postgres world's

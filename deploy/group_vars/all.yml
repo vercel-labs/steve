@@ -77,8 +77,13 @@ beszel_hub_port: 8090
 beszel_agent_port: 45876
 # Agent credentials from the hub's "Add System" flow (Beszel UI -> Add System).
 # The hub shows a public KEY; the WebSocket-based agent also gets a TOKEN.
+# The KEY is a public key (safe to commit). The TOKEN is a shared secret, so it
+# now comes from the BESZEL_AGENT_TOKEN environment variable at deploy time
+# (export it before `ansible-playbook deploy.yml`, exactly like DO_API_TOKEN).
+# Left unset, the agent simply runs unregistered until you export it. The demo
+# value and setup notes live in ../.env.example and deploy/README.md.
 beszel_agent_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINdKZV4m7N8SNyZQhu3ZCS1L48URuWlECHuNhQewRdCF"
-beszel_agent_token: "25d09c13-7c39-432f-8864-7f6f84a4a334"
+beszel_agent_token: "{{ lookup('env', 'BESZEL_AGENT_TOKEN') | default('', true) }}"
 # Hub URL the agent connects back to (use the public origin for the WS handshake).
 beszel_hub_url: "https://status.eve.phil.bingo"
 
@@ -98,12 +103,17 @@ jaeger_otlp_port: 4318
 # Public subdomain for the Jaeger UI (needs its own A record -> droplet IP).
 # Leave empty to keep Jaeger internal (reach it via SSH tunnel instead).
 jaeger_domain: "jaeger.eve.phil.bingo"
-# HTTP Basic credentials for the public Jaeger UI. The password is a bcrypt
-# hash (Caddy `basic_auth` format). Regenerate with:
-#   caddy hash-password --plaintext '<password>'
-# Default demo login below is user `eve` / password `justshipthings`.
-jaeger_basic_auth_user: "eve"
-jaeger_basic_auth_hash: "$2a$14$bJVPqzWhGCf0.G/T9MC6peaH5BckzStlmz3PMl/Q8hhzf0eTgOjRC"
+# HTTP Basic credentials for the public Jaeger UI, sourced from the environment
+# at deploy time so they aren't baked into this file:
+#   JAEGER_BASIC_AUTH_USER  username (defaults to `eve` if unset)
+#   JAEGER_BASIC_AUTH_HASH  bcrypt hash of the password (Caddy `basic_auth` format)
+# Export them before `ansible-playbook deploy.yml` (like DO_API_TOKEN). Generate
+# a hash with:  caddy hash-password --plaintext '<password>'
+# If JAEGER_BASIC_AUTH_HASH is unset, the Jaeger UI is served WITHOUT Basic auth.
+# The demo login (`eve` / `justshipthings`) and its hash live in ../.env.example
+# and deploy/README.md so you can copy them straight in.
+jaeger_basic_auth_user: "{{ lookup('env', 'JAEGER_BASIC_AUTH_USER') | default('eve', true) }}"
+jaeger_basic_auth_hash: "{{ lookup('env', 'JAEGER_BASIC_AUTH_HASH') | default('', true) }}"
 
 # --- Reverse proxy / TLS (caddy) ------------------------------------------
 # Leave empty until DNS is pointed at the droplet. While empty, Caddy serves
