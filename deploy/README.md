@@ -28,12 +28,10 @@ you (laptop)  --ssh-->  droplet
   Docker socket to spawn sandbox containers, so running it natively (rather than
   in a container that mounts the socket) is simpler and matches the verified
   local setup.
-- **`eve start` (the production host)**: historically (eve 0.13.x) only `eve dev`
-  registered the custom Postgres world's queue handler, so this deploy used to run
-  `eve dev --no-ui`. **Fixed in eve 0.15.0** — `eve start` now runs the custom
-  world correctly, so the app role does `eve build` and the unit runs `eve start`.
-  Caveat: unlike `eve dev`, `eve start` does **not** reap per-run Docker sandbox
-  containers on shutdown; run an external reaper if that matters.
+- **`eve start` (the production host)**: the app role does `eve build` and the
+  unit runs `eve start`. Caveat: unlike `eve dev`, `eve start` does **not** reap
+  per-run Docker sandbox containers on shutdown; run an external reaper if that
+  matters.
 - **Caddy path-routes the eve API straight to the agent**, and everything else
   to the Next UI. We deliberately do *not* use `withEve`'s production rewrite
   (`EVE_NEXT_PRODUCTION_ORIGIN`) to forward `/eve/v1/*`: that rewrite assumes the
@@ -165,8 +163,7 @@ curl http://<droplet-ip>/eve/v1/health       # the agent API
 curl -I http://<droplet-ip>/                 # -> x-hosted-on-vercel: false
 ```
 
-> As of eve 0.15.0, `HEAD /eve/v1/health` returns `200` (it 404'd on 0.13.x), so
-> HEAD-based health/uptime probes work.
+> `HEAD /eve/v1/health` returns `200`, so HEAD-based health/uptime probes work.
 
 ## 5. Add your domain (when ready)
 

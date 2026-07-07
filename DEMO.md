@@ -51,10 +51,10 @@ into its sandbox at `/workspace/movies.csv`, so answers are checkable by eye.
 
 1. In a terminal:
    ```bash
-   curl -I https://eve.phil.bingo/eve/v1/health -X GET
+   curl -I https://eve.phil.bingo/eve/v1/health
    ```
    Point at the **`x-hosted-on-vercel: false`** header — injected by our own
-   Caddy on the droplet. (Use `-X GET`; eve 404s `HEAD`.)
+   Caddy on the droplet.
 2. Open **https://status.eve.phil.bingo** (Beszel). Show live CPU / memory /
    **Docker containers** — you can see `steve-postgres` and the ephemeral
    `eve-sbx-...` sandbox container that ran the analysis. *"This is the actual
