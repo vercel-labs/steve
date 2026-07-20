@@ -17,6 +17,8 @@ EnvironmentFile={{ app_dir }}/.env
 Environment=HOME=/home/{{ app_user }}
 Environment=NODE_ENV=production
 Environment=PORT={{ app_port }}
+Environment=WORKFLOW_POSTGRES_WORKER_CONCURRENCY={{ workflow_worker_concurrency }}
+Environment=WORKFLOW_POSTGRES_MAX_POOL_SIZE={{ workflow_postgres_max_pool_size }}
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # Ensure the Postgres world container is up and accepting connections before
 # the agent starts. On reboot the agent would otherwise race the Docker

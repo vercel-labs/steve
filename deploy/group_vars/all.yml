@@ -57,6 +57,8 @@ pnpm_env:
 
 # The eve agent host (eve start), bound to localhost.
 app_port: 3000
+workflow_worker_concurrency: 10
+workflow_postgres_max_pool_size: 12
 # Postgres is published on loopback only by docker-compose.yml.
 postgres_host_port: 5544
 
