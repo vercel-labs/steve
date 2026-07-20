@@ -53,6 +53,7 @@ workflow_backup_retention: 10
 # in pnpm-workspace.yaml instead of a process-wide allow-all switch.
 pnpm_env:
   HOME: "/home/{{ app_user }}"
+  CI: "true"
 
 # The eve agent host (eve start), bound to localhost.
 app_port: 3000
