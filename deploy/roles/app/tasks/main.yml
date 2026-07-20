@@ -449,6 +449,24 @@
       --backend @workflow/world-postgres` (and repeat for pending), then rerun the
       deployment. The pre-migration backup is in {{ workflow_backup_dir }}.
 
+- name: Find legacy Eve sandbox containers after the replay cutover
+  when: eve_crosses_replay_cutover | bool
+  ansible.builtin.command:
+    cmd: docker ps -aq --filter name=eve-sbx-
+  register: legacy_eve_sandboxes
+  changed_when: false
+
+- name: Remove canceled legacy Eve sandbox containers
+  when:
+    - eve_crosses_replay_cutover | bool
+    - legacy_eve_sandboxes.stdout_lines | length > 0
+  ansible.builtin.command:
+    cmd: "docker rm -f {{ item }}"
+  loop: "{{ legacy_eve_sandboxes.stdout_lines }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: true
+
 - name: Migrate the Workflow world schema (idempotent)
   ansible.builtin.command:
     cmd: pnpm run db:migrate

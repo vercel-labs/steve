@@ -70,6 +70,7 @@ swapfile_path: "/swapfile"
 # Beszel hub (dashboard) + agent run on this droplet via Docker. The hub is
 # exposed at monitoring_domain with TLS; it has its own login.
 monitoring_enabled: false
+monitoring_manage: true
 monitoring_dir: "/opt/beszel"
 beszel_hub_port: 8090
 # Port the Beszel agent listens on for the hub (loopback only).
@@ -92,6 +93,7 @@ beszel_hub_url: ""
 # recording remain disabled unless explicitly enabled. The UI is exposed only
 # when jaeger_domain and Basic auth are configured.
 jaeger_enabled: true
+jaeger_manage: true
 jaeger_dir: "/opt/jaeger"
 # Jaeger all-in-one UI (bound to localhost; Caddy terminates TLS + adds auth).
 jaeger_ui_port: 16686
@@ -124,3 +126,4 @@ allow_plain_http_existing_deployment: false
 monitoring_domain: ""
 # Email used for the Let's Encrypt ACME account (recommended once domain set).
 acme_email: ""
+caddy_manage: true

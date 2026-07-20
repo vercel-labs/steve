@@ -27,10 +27,14 @@
     - role: app
     - role: frontend
     - role: monitoring
+      when: monitoring_manage | default(true) | bool
     - role: jaeger
-      when: jaeger_enabled | default(false)
+      when:
+        - jaeger_enabled | default(false) | bool
+        - jaeger_manage | default(true) | bool
     - role: caddy
       become: true
+      when: caddy_manage | default(true) | bool
 
   post_tasks:
     - name: Wait for the eve agent to answer on localhost
