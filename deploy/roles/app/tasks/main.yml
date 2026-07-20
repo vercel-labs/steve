@@ -151,28 +151,67 @@
   ansible.builtin.command:
     argv:
       - node
-      - "--env-file={{ local_env_file }}"
       - -e
       - |
+        const { readFileSync } = require("node:fs");
+        const { parseEnv } = require("node:util");
+        const env = parseEnv(readFileSync(process.argv[1], "utf8"));
+        const errors = [];
         const required = (name, minLength = 1) => {
-          const value = process.env[name] ?? "";
-          if (value.length < minLength) throw new Error(`${name} is missing or too short`);
+          const value = env[name] ?? "";
+          if (value.length < minLength) {
+            errors.push(`${name} is missing or shorter than ${minLength} characters`);
+          }
           return value;
         };
-        if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
-          throw new Error("Set OPENAI_API_KEY or ANTHROPIC_API_KEY");
+        if (!env.OPENAI_API_KEY && !env.ANTHROPIC_API_KEY) {
+          errors.push("OPENAI_API_KEY or ANTHROPIC_API_KEY must be set");
         }
-        const username = required("ROUTE_AUTH_BASIC_USER");
+        required("ROUTE_AUTH_BASIC_USER");
         const password = required("ROUTE_AUTH_BASIC_PASSWORD", 16);
-        const postgresPassword = required("POSTGRES_PASSWORD", 16);
-        required("WORKFLOW_POSTGRES_URL");
+        const workflowUrl = required("WORKFLOW_POSTGRES_URL");
         if (["change-me", "replace-with-a-long-random-password"].includes(password)) {
-          throw new Error("Replace ROUTE_AUTH_BASIC_PASSWORD");
+          errors.push("ROUTE_AUTH_BASIC_PASSWORD still uses the public placeholder");
         }
-        if (["world", "replace-with-a-long-random-password"].includes(postgresPassword)) {
-          throw new Error("Replace POSTGRES_PASSWORD");
+        if (env.POSTGRES_PASSWORD) {
+          if (env.POSTGRES_PASSWORD.length < 16) {
+            errors.push("POSTGRES_PASSWORD is shorter than 16 characters");
+          }
+          if (["world", "replace-with-a-long-random-password"].includes(env.POSTGRES_PASSWORD)) {
+            errors.push("POSTGRES_PASSWORD still uses the public placeholder");
+          }
+          try {
+            if (decodeURIComponent(new URL(workflowUrl).password) !== env.POSTGRES_PASSWORD) {
+              errors.push("POSTGRES_PASSWORD does not match WORKFLOW_POSTGRES_URL");
+            }
+          } catch {
+            errors.push("WORKFLOW_POSTGRES_URL is not a valid URL");
+          }
         }
-        process.stdout.write(JSON.stringify({ username, password }));
+        if (errors.length > 0) {
+          console.error(`Invalid .env:\n- ${errors.join("\n- ")}`);
+          process.exit(1);
+        }
+        console.log("Validated required production settings");
+      - "{{ local_env_file }}"
+  delegate_to: localhost
+  become: false
+  changed_when: false
+
+- name: Read validated route credentials for deployment checks
+  ansible.builtin.command:
+    argv:
+      - node
+      - -e
+      - |
+        const { readFileSync } = require("node:fs");
+        const { parseEnv } = require("node:util");
+        const env = parseEnv(readFileSync(process.argv[1], "utf8"));
+        process.stdout.write(JSON.stringify({
+          username: env.ROUTE_AUTH_BASIC_USER,
+          password: env.ROUTE_AUTH_BASIC_PASSWORD,
+        }));
+      - "{{ local_env_file }}"
   delegate_to: localhost
   become: false
   register: validated_app_env
