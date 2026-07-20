@@ -1,296 +1,232 @@
-# steve — a fully self-hosted eve agent
+# Steve: self-hosted Eve runtime reference
 
-A proof of concept that Vercel's `eve` agent framework runs **end to end with
-zero Vercel-proprietary infrastructure**:
+Steve is a movie-data agent built with [Eve](https://eve.dev) and deployed on a
+regular Node.js host. It demonstrates how to run Eve without Vercel-managed
+runtime infrastructure:
 
-- **Durability** comes from a self-hosted **Postgres Workflow world**
-  (`@workflow/world-postgres`), not Vercel Workflow.
-- **Code isolation** comes from a **Docker sandbox**, not Vercel Sandbox.
-- **Model calls** go **directly to OpenAI**, not through the AI Gateway.
-- **Observability** comes from the **Workflow CLI** + OpenTelemetry traces,
-  not the Vercel Agent Runs dashboard. Locally, traces/logs/metrics go to a
-  local **Observe dashboard** (`@open-observe/sdk`); in production they go to a
-  self-hosted **Jaeger**. The backend is chosen by env (see below).
+- PostgreSQL stores durable Workflow state.
+- Docker isolates model-authored Python and blocks sandbox network egress.
+- OpenAI or Anthropic is called directly through its AI SDK provider package.
+- A Next.js chat UI talks to Eve through the stable `/eve/v1` protocol.
+- OpenTelemetry exports traces to a collector you operate, such as Jaeger.
 
-The agent is a durable, multi-step **data analyst**: given a request it
-(1) generates a synthetic dataset, (2) analyzes it, and (3) summarizes the
-result — each a distinct durable step, and all code runs inside the sandbox.
+The Eve runtime and control plane are self-hosted. Model inference is not: user
+messages and model context are sent directly to the configured OpenAI or
+Anthropic API.
 
-It runs locally for the proofs below, **and** is deployed end-to-end to an
-independent DigitalOcean droplet (no Vercel) with a one-command Ansible
-pipeline. See **[What's deployed](#whats-deployed)** for the live topology,
-**[`deploy/README.md`](./deploy/README.md)** for the full runbook, and
-**[`DEMO.md`](./DEMO.md)** for a ~5-minute live demo script.
+> Eve is in public preview. `@workflow/world-postgres` describes itself as a
+> reference implementation. This repository is a transparent single-host
+> deployment baseline, not a high-availability production architecture.
 
-## What it proves
+## Architecture
 
-| Vercel-proprietary service | Replaced here by |
-| --- | --- |
-| Vercel Workflow (managed durability) | `@workflow/world-postgres` + Dockerized Postgres |
-| Vercel Sandbox | Docker container sandbox (`eve/sandbox/docker`) |
-| AI Gateway | direct `@ai-sdk/openai` / `@ai-sdk/anthropic` + provider key |
-| Agent Runs dashboard | `workflow inspect runs` / `workflow web` |
-| Vercel Connect / Blob / Cron | not used |
+```text
+browser
+  -> Caddy :443
+     -> /eve/* and /.well-known/workflow/* -> Eve :3000
+     -> all other paths                    -> Next.js :3001
 
-See **[PROOF.md](./PROOF.md)** for the three reproducible proofs (isolation,
-crash-recovery durability, no-Vercel).
+Eve
+  -> OpenAI or Anthropic API
+  -> PostgreSQL Workflow world :5544 (loopback only)
+  -> per-session Docker sandbox (deny-all egress)
+  -> OTLP/HTTP collector (optional)
+```
 
-## Prerequisites
+Both `/eve/` and `/.well-known/workflow/` must reach the Eve service. Omitting
+the Workflow callback prefix allows sessions to start but leaves turns stalled.
 
-- **Node >= 24** (tested on 24.15.0)
-- **pnpm** (tested on 10.33.2)
-- **Docker** (Engine 24+, used for both Postgres and the agent sandbox)
-- A provider API key with quota: **`OPENAI_API_KEY`** (default) or
-  **`ANTHROPIC_API_KEY`** (fallback)
+## Compatibility set
 
-### Model choice
-
-`agent/agent.ts` selects a provider based on which key you set:
-
-- **OpenAI (default):** `gpt-5-mini`, reading `OPENAI_API_KEY`.
-- **Anthropic (fallback):** `claude-haiku-4-5`, reading `ANTHROPIC_API_KEY`,
-  used automatically when `OPENAI_API_KEY` is unset.
-
-Both are cheap so anyone can run the proofs, and both reliably complete the
-generate → analyze → summarize loop with correct, sandbox-computed numbers.
-Either way the call goes directly to the provider (no AI Gateway). Swap in a
-bigger model (e.g. `gpt-5.1` or `claude-sonnet-4-6`) for higher quality, or
-wire any other direct provider by changing the model object in `agent.ts` and
-setting the matching key.
-
-## Pinned versions
-
-These are pinned exactly in `package.json`; the beta line matters (see Gotchas).
+The lockfile pins the packages that must move together:
 
 | Package | Version |
 | --- | --- |
-| `eve` | `0.15.0` |
-| `@workflow/world-postgres` | `5.0.0-beta.19` |
-| `workflow` (CLI) | `4.5.0` |
-| `@ai-sdk/openai` | `3.0.74` |
-| `@ai-sdk/anthropic` | `3.0.86` |
-| `ai` | `7.0.0-canary.171` |
-| `@opentelemetry/sdk-node` | `0.219.0` |
+| `eve` | `0.25.2` |
+| `ai` | `7.0.31` |
+| `@ai-sdk/openai` / `@ai-sdk/anthropic` | `4.0.16` |
+| `workflow` | `5.0.0-beta.35` |
+| `@workflow/world-postgres` | `5.0.0-beta.27` |
 
-> **The `@workflow/world-postgres` version is critical.** The npm `latest` tag
-> is `4.2.0`, which is **incompatible** and will make runs fail mid-execution.
-> You must use the `5.0.0-beta` line that matches eve's bundled `@workflow/core`
-> (eve `0.15.0` bundles `@workflow/core@5.0.0-beta.24`; `world-postgres@5.0.0-beta.19`
-> brings `@workflow/world@5.0.0-beta.13`, which knows the `attr_set` event eve
-> emits). See [Gotchas](#gotchas-discrepancies-from-the-naive-setup).
+Do not replace the Postgres world with its npm `latest` tag. Eve currently uses
+the Workflow 5 beta protocol, while that package's `latest` tag is Workflow 4.
 
-## Setup
+## Prerequisites
 
-```bash
-pnpm install
-cp .env.example .env          # then edit .env: set a funded OPENAI_API_KEY
-make db-up                    # start Postgres on host port 5544
-make db-migrate               # create the Workflow world schema (idempotent)
-```
+- Node.js 24
+- Corepack with pnpm 10.33.2
+- Docker Engine or Docker Desktop
+- An OpenAI or Anthropic API key with quota
 
-The required env vars (see `.env.example` for the full list):
+## Local setup
 
 ```bash
-OPENAI_API_KEY="sk-..."                                  # default provider, direct (no Gateway)
-# ANTHROPIC_API_KEY="sk-ant-..."                         # fallback if OPENAI_API_KEY is unset
-WORKFLOW_POSTGRES_URL="postgres://world:world@localhost:5544/world"
-WORKFLOW_TARGET_WORLD="@workflow/world-postgres"          # default backend for the CLI
-WORKFLOW_QUEUE_NAMESPACE="eve"                            # MUST be "eve" (see Gotchas)
-ROUTE_AUTH_BASIC_USER="admin"
-ROUTE_AUTH_BASIC_PASSWORD="change-me"
-HOST_ONLY_SECRET="..."                                    # used by the isolation proof
-# OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"     # optional, enables Jaeger
+corepack enable
+pnpm install --frozen-lockfile --strict-peer-dependencies
+cp .env.example .env
 ```
 
-## Run
+Edit `.env` before continuing:
 
-Start the long-running host (it polls the Postgres queue and serves HTTP):
+1. Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`.
+2. Replace both example passwords.
+3. Keep `POSTGRES_PASSWORD` and the password inside `WORKFLOW_POSTGRES_URL` identical.
+
+Start and migrate PostgreSQL:
+
+```bash
+pnpm db:up
+pnpm db:migrate
+```
+
+Start the web app:
+
+```bash
+pnpm dev
+```
+
+`withEve()` starts the Eve development host beside Next.js. Open
+`http://localhost:3000`. Loopback requests use `localDev()` and do not require
+Basic auth.
+
+For a headless Eve host instead:
 
 ```bash
 make dev
-# -> server listening at http://localhost:3000/
 ```
 
-> `make dev` runs `eve dev --no-ui`. `eve dev` is used locally because it
-> auto-reaps the per-run Docker sandbox containers on shutdown, which `eve start`
-> does not (`eve build && eve start` also works — production uses it).
+Then run `pnpm smoke:self-host` in a second terminal.
 
-In another terminal, start a session:
+## Production auth
 
-```bash
-make session
-# {"continuationToken":"eve:...","ok":true,"sessionId":"wrun_..."}
+`agent/channels/eve.ts` uses environment-specific policies:
 
-# Stream it (NDJSON), one event per line:
-curl -N http://localhost:3000/eve/v1/session/<sessionId>/stream
+```text
+development: localDev() -> httpBasic(...) -> reject
+production:  httpBasic(...) -> reject
 ```
 
-## Observe (replaces the Vercel dashboard)
+Production never enables `localDev()`, so spoofing a loopback `Host` header
+cannot bypass authentication. Requests fail with `401` unless both
+`ROUTE_AUTH_BASIC_USER` and `ROUTE_AUTH_BASIC_PASSWORD` are configured. If
+either variable is missing, Eve's production placeholder keeps the routes
+closed.
 
-```bash
-make observe        # workflow inspect runs --backend @workflow/world-postgres
-make observe-web    # workflow web --backend @workflow/world-postgres  (browser UI)
-```
+The production UI asks the visitor for those credentials and validates them
+against `/eve/v1/info`. The password remains in browser memory and is not
+embedded in the JavaScript bundle or persisted to local storage. Use HTTPS
+before entering it.
 
-### OpenTelemetry traces: OpenObserve (local) or Jaeger (prod)
+## Agent behavior
 
-eve's trace spans (`ai.eve.turn` -> `ai.streamText` -> `ai.toolCall`) are
-exported over OTLP/HTTP by `agent/instrumentation.ts`:
+Each durable session receives `/workspace/movies.csv`, a small bundled dataset
+of approximate reference figures for well-known films. `run_python` writes a
+script into the session's Docker sandbox and returns stdout, stderr, and the
+exit code.
 
-- **Jaeger** (default, prod): if `OTEL_EXPORTER_OTLP_ENDPOINT` is set, vanilla
-  OpenTelemetry exports trace spans to a self-hosted Jaeger. This is the
-  committed default and needs no code changes.
-- **OpenObserve** (local, opt-in): exports **traces, logs, and metrics** to a
-  local Observe dashboard via `@open-observe/sdk`. Because that SDK is **not
-  published to npm** (it's a local `link:` checkout shipping raw TS), the import
-  is a **manual comment/uncomment toggle** in `agent/instrumentation.ts` rather
-  than env-only — the committed default keeps it disabled so `eve start` /
-  `next build` never reference the unpublished package. When enabled (and
-  `OPEN_OBSERVE_OTLP_ENDPOINT` set) it takes precedence over Jaeger.
-- Neither configured: telemetry export is disabled (fail-open); the agent runs.
+The sandbox configuration:
 
-**Local (OpenObserve):**
+- pins a multi-architecture Eve image digest that includes Python 3;
+- uses `deny-all` network policy;
+- receives no host environment variables;
+- persists `/workspace` across turns in the same durable session;
+- limits each authored Python program to 15 seconds;
+- caps combined stdout and stderr at 256 KiB;
+- stops compute on Eve shutdown and reattaches the session after restart.
 
-```bash
-# In the openobserve checkout — start the dashboard (OTLP ingest + UI on :3001):
-pnpm --filter @open-observe/dashboard dev
+Built-in Bash, app-runtime web fetch, provider web search, and recursive agent
+tools are disabled. The agent also has explicit per-session token budgets.
 
-# In this repo:
-#   1. In agent/instrumentation.ts, flip the OpenObserve toggle ON
-#      (comment the prod-safe `resolveObserve = () => undefined` line and
-#       uncomment the `import { observe }` + observe-returning line below it).
-#   2. .env sets OPEN_OBSERVE_OTLP_ENDPOINT=http://localhost:3001
-make dev
-make session      # drive a run, then explore at http://localhost:3001/p/steve
-```
+## Observability
 
-**Local (Jaeger), to mirror production:** comment out `OPEN_OBSERVE_OTLP_ENDPOINT`
-in `.env` and set `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`, then:
+Set a standard OTLP endpoint to export Eve and AI SDK trace spans:
 
 ```bash
 docker compose --profile observability up -d jaeger
-make dev
-make session      # spans at http://localhost:16686
+# .env
+OTEL_EXPORTER_OTLP_ENDPOINT="http://127.0.0.1:4318"
 ```
 
-On the deployed droplet Jaeger runs in Docker and its UI is exposed publicly at
-**`https://jaeger.eve.phil.bingo`** behind Caddy with HTTP Basic auth, so the
-spans can be demoed in a browser. The deploy sets `OTEL_EXPORTER_OTLP_ENDPOINT`
-and leaves `OPEN_OBSERVE_OTLP_ENDPOINT` unset, so production uses Jaeger. See
-[`deploy/README.md`](./deploy/README.md).
+Open `http://127.0.0.1:16686` locally. The same exporter works with any
+OTLP/HTTP-compatible collector; configure `OTEL_EXPORTER_OTLP_HEADERS` when it
+requires authentication.
 
-## The three proofs
+Full model inputs and outputs are disabled by default. Set
+`OTEL_RECORD_INPUTS=true` or `OTEL_RECORD_OUTPUTS=true` only after reviewing the
+collector, access policy, and retention path.
 
-Full runbook in **[PROOF.md](./PROOF.md)**. In short:
+Workflow state can also be inspected directly:
 
 ```bash
-make proof-isolation   # sandbox prints container hostname; host-only secret unreachable
-# durability proof: start a session, kill `make dev` mid-run, restart, confirm resume
-make proof-novercel    # greps agent/ + .env for active Vercel coupling -> CLEAN
+pnpm observe
+pnpm observe:web
 ```
 
-## What's deployed
+## Verification
 
-Beyond the local proofs, the whole stack is deployed to a single **DigitalOcean
-droplet** — provisioned, hardened, and configured entirely by an **Ansible**
-pipeline under [`deploy/`](./deploy). There is **no Vercel deploy step**. What
-runs on the droplet:
-
-| Component | What it is | Where |
-| --- | --- | --- |
-| **eve agent** | the durable data-analyst host (`eve start`), native under systemd | `127.0.0.1:3000` (`steve.service`) |
-| **Next.js UI** | a chat front-end (`withEve` + `useEveAgent`), native under systemd | `127.0.0.1:3001` (`steve-web.service`) |
-| **Postgres** | the durable Workflow world (Docker) | `127.0.0.1:5544` (`steve-postgres`) |
-| **Docker sandbox** | per-run isolated containers the agent spawns via the Docker socket | ephemeral |
-| **Beszel** | host/Docker monitoring — hub (dashboard) + agent, in Docker | `127.0.0.1:8090` + agent |
-| **Jaeger** | OpenTelemetry trace UI + OTLP receiver (Docker); the agent ships spans to it | `127.0.0.1:16686` + `:4318` |
-| **Caddy** | public reverse proxy, automatic Let's Encrypt TLS, header injection | `:80/:443` |
-
-Public routing (single droplet, all behind Caddy):
-
-```
-eve.phil.bingo
-  ├─ /eve/*, /.well-known/workflow/*  ->  eve agent      (127.0.0.1:3000)
-  └─ everything else (the chat UI)    ->  Next.js         (127.0.0.1:3001)
-status.eve.phil.bingo                 ->  Beszel hub      (127.0.0.1:8090)
-jaeger.eve.phil.bingo (Basic auth)    ->  Jaeger UI       (127.0.0.1:16686)
-```
-
-Every response carries **`x-hosted-on-vercel: false`**, injected by Caddy, to
-make the "not on Vercel" claim self-evident.
-
-### Deploy / operate
+Static checks do not require a model key:
 
 ```bash
-cd deploy
-export DO_API_TOKEN=dop_v1_...
-# Optional deploy-time auth (demo values also in .env.example); see deploy/README.md:
-#   export BESZEL_AGENT_TOKEN=...              # Beszel agent token from the hub
-#   export JAEGER_BASIC_AUTH_USER=eve          # Jaeger UI Basic auth (user defaults to eve)
-#   export JAEGER_BASIC_AUTH_HASH='$2a$14$...' # bcrypt hash of the Jaeger password
-make deps && make all          # provision -> harden -> deploy
-make deploy                    # redeploy latest (idempotent)
-make status / make logs        # operate the droplet
+pnpm install --frozen-lockfile --strict-peer-dependencies
+pnpm exec eve info --json
+pnpm typecheck
+pnpm build
+docker compose config --quiet
+pnpm audit --prod --audit-level high
+make -C deploy check
 ```
 
-Highlights of the pipeline (full detail in [`deploy/README.md`](./deploy/README.md)):
+Live checks use the configured model provider and may incur provider cost:
 
-- **Provision** a droplet via the DO API; **harden** it (non-root deploy user,
-  key-only SSH, `ufw` 22/80/443, `fail2ban`, unattended security upgrades).
-- **Agent + UI** run under systemd; the agent unit waits for Postgres on boot.
-  Code ships via a read-only GitHub **deploy key** + `git pull`; the local
-  `.env` is copied up (PoC-simple, no vault).
-- **Caddy** path-routes the eve API straight to the agent and everything else to
-  the UI — deliberately *not* using `withEve`'s production rewrite, which
-  double-prefixes paths for a separate-origin agent (see `deploy/README.md`).
-- **Auth:** the agent is **public (`none()`)** so the UI works without
-  credentials — a PoC choice. Swap `agent/channels/eve.ts` back to
-  `[localDev(), httpBasic({...})]` to lock it down.
-- **Monitoring/tracing auth:** the Beszel agent token and Jaeger UI Basic-auth
-  are read from deploy-time env vars (`BESZEL_AGENT_TOKEN`,
-  `JAEGER_BASIC_AUTH_USER`, `JAEGER_BASIC_AUTH_HASH`) rather than committed to
-  `group_vars/all.yml`. The demo login stays `eve` / `justshipthings` — see
-  `deploy/README.md` and `.env.example`.
+```bash
+set -a && . ./.env && set +a
+pnpm smoke:self-host
+pnpm test:eval
+```
 
-> The production host runs `eve start` (with `eve build` ahead of it). One caveat:
-> unlike `eve dev`, `eve start` does not auto-reap the per-run Docker sandbox
-> containers on shutdown, so run an external reaper if that matters.
+The smoke client verifies health, agent inspection, sandboxed Python, exact
+movie facts, streaming, a follow-up on the same session, and bounded server-side
+cancellation and output. Set
+`SELF_HOST_URL`, and set `SELF_HOST_EXPECT_AUTH=1` when targeting a production
+origin.
 
-## Gotchas (discrepancies from the naive setup)
+See [PROOF.md](./PROOF.md) for isolation and crash-recovery procedures.
 
-1. **`@workflow/world-postgres@latest` (4.2.0) is incompatible.** Its event schema
-   lacks the `attr_set` event eve emits, so runs fail mid-replay with a `ZodError`
-   (`No matching discriminator "eventType"`). Pin `@workflow/world-postgres@5.0.0-beta.19`
-   to match eve's bundled `@workflow/core` (eve `0.15.0` bundles `5.0.0-beta.24`;
-   `world-postgres@5.0.0-beta.19` brings `@workflow/world@5.0.0-beta.13`, which
-   knows `attr_set`).
+## Deployment
 
-2. **`WORKFLOW_QUEUE_NAMESPACE` must be `eve`.** eve registers its workflow queue
-   handler under prefix `__eve_wkf_workflow_`, but the Postgres world defaults to
-   `__wkf_workflow_`. Without the namespace, every job returns
-   `400 {"error":"Unhandled queue"}` and runs never advance. Setting
-   `WORKFLOW_QUEUE_NAMESPACE=eve` aligns them.
+The `deploy/` directory provisions a DigitalOcean droplet and installs the two
+Node services, PostgreSQL, optional Beszel monitoring, optional Jaeger tracing,
+and Caddy. Start with [deploy/README.md](./deploy/README.md).
 
-3. **`docker()` backend network policy goes on the factory, not `onSession`.**
-   Set `networkPolicy` on the Docker backend factory; the sandbox uses a
-   `deny-all` egress policy this way (`agent/sandbox/sandbox.ts`).
+Before each Workflow schema migration, Ansible writes a custom-format PostgreSQL
+backup under `/opt/steve-backups/`. Production-shaped unauthenticated and
+authenticated requests are checked before a deployment is reported healthy.
+
+The one-time upgrade from Eve versions before `0.20` is guarded specially.
+Active runs from that runtime line did not replay safely in verification against
+the current Workflow runtime. Ansible refuses the cutover until the operator
+inspects and explicitly cancels those old active runs; later `0.25` restarts
+continue to resume compatible parked sessions normally.
+
+## Limitations
+
+- One host is a single point of failure.
+- The embedded Postgres world's workers are not separated from the Eve process.
+- Database backup retention and off-host replication are operator responsibilities.
+- Docker sandbox CPU and memory quotas are not exposed by Eve's built-in Docker backend.
+- Basic auth is appropriate for a controlled reference deployment, not multi-tenant identity.
+- Model provider availability, policy, retention, and cost remain external dependencies.
 
 ## Project layout
 
-```
-agent/
-  agent.ts                 direct OpenAI/Anthropic model + experimental.workflow.world
-  instructions.md          data-analyst persona (always computes via the sandbox)
-  channels/eve.ts          HTTP channel, auth = [none()] (public, PoC) — see deploy notes
-  sandbox/sandbox.ts        Docker backend, deny-all egress
-  tools/run_python.ts      executes Python in the sandbox -> {stdout,stderr,exitCode}
-  instrumentation.ts       OTel traces -> OpenObserve (local) or Jaeger (prod)
-app/, components/, lib/    Next.js chat UI (withEve + useEveAgent)
-next.config.ts             withEve(); transpilePackages @open-observe/sdk
-deploy/                    Ansible: provision + harden + deploy agent, UI, Beszel, Caddy
-  README.md                full deploy runbook; roles/ for each component
-docker-compose.yml         postgres:16 (+ jaeger `observability` profile)
-Makefile                   db-up, db-migrate, dev, observe, proof-* targets
-.env.example
-PROOF.md                   the three proofs, step by step
+```text
+agent/                    Eve agent, channel, tools, sandbox, instrumentation
+app/                      Next.js chat UI
+evals/                    live Eve regression evals
+scripts/                  reusable self-host smoke client
+deploy/                   Ansible single-host deployment
+docker-compose.yml        PostgreSQL and optional local Jaeger
+Makefile                  local operations and verification helpers
+DEMO.md                   customer-safe demo script
+PROOF.md                  reproducible verification procedures
 ```

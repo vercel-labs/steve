@@ -1,237 +1,183 @@
-# PROOF — demonstrating a fully self-hosted eve agent
+# Reproducible self-host verification
 
-This document is the reproducible evidence that the thesis holds: `eve` runs
-end to end with **no Vercel-proprietary infrastructure**. Three proofs:
+This document defines evidence that can be regenerated from the current source.
+It intentionally contains no historical session IDs, screenshots, passwords, or
+output captured from older Eve releases.
 
-1. **Isolation** — model-generated code runs in the Docker sandbox, never in the host.
-2. **Durability** (headline) — a run survives killing and restarting the host.
-3. **No-Vercel** — the project has zero active Vercel coupling.
+## Scope of the claim
 
-## Replacement map
+The repository demonstrates that these components can run without
+Vercel-managed infrastructure:
 
-Every Vercel-proprietary service is replaced by a self-hosted component:
+| Concern | Implementation |
+| --- | --- |
+| Eve host | `eve build` and `eve start` on Node.js |
+| Durable execution | `@workflow/world-postgres` and PostgreSQL |
+| Sandbox | Eve's Docker backend with deny-all egress |
+| Web application | Next.js behind Caddy |
+| Tracing | OpenTelemetry over OTLP/HTTP |
 
-| Vercel service | Self-hosted replacement | Where |
-| --- | --- | --- |
-| Vercel Workflow | `@workflow/world-postgres` + Dockerized Postgres | `agent/agent.ts`, `docker-compose.yml` |
-| Vercel Sandbox | Docker container backend | `agent/sandbox/sandbox.ts` |
-| AI Gateway | direct `@ai-sdk/openai` + `OPENAI_API_KEY` | `agent/agent.ts` |
-| Agent Runs dashboard | `workflow inspect runs` / `workflow web` | `make observe` / `make observe-web` |
-| Vercel OTel / observability | vanilla OpenTelemetry → Jaeger | `agent/instrumentation.ts` |
-| Vercel Connect / Blob / Cron | not used | — |
+OpenAI or Anthropic still performs model inference. This verification does not
+claim that the complete AI supply chain is self-hosted.
 
-## Prerequisites for all proofs
+## 1. Dependency and build integrity
+
+Start from a clean checkout:
 
 ```bash
-pnpm install
-cp .env.example .env        # set a funded OPENAI_API_KEY; keep WORKFLOW_QUEUE_NAMESPACE=eve
-make db-up
-make db-migrate
-make dev                     # long-running host in its own terminal
+corepack enable
+pnpm install --frozen-lockfile --strict-peer-dependencies
+pnpm exec eve info --json
+pnpm typecheck
+pnpm build
+pnpm audit --prod --audit-level high
 ```
 
----
+Expected evidence:
 
-## Proof 1 — Isolation (code runs in the sandbox, not the host)
+- Eve reports version `0.25.2`, status `ready`, and zero diagnostics.
+- `pnpm why` reports one `ai@7` line and one Workflow 5 beta line.
+- Both the Nitro Eve output and Next.js production output build.
+- The lockfile contains no `link:` dependency or workstation path.
+- The production audit has no high or critical advisory.
 
-The host process has a secret in its environment (`HOST_ONLY_SECRET`) that is
-**never** passed into the sandbox. We ask the agent to print, from inside the
-sandbox, its container hostname and any value it can see for that secret.
+Inspect the coupled packages explicitly:
 
 ```bash
-make proof-isolation
-# returns a sessionId; stream it:
-curl -N http://localhost:3000/eve/v1/session/<sessionId>/stream
+pnpm why eve ai @ai-sdk/provider @workflow/core @workflow/world @workflow/world-postgres
 ```
 
-**What to observe in the response:**
+## 2. Production route protection
 
-- `socket.gethostname()` prints a **Docker container id** (a random 12-hex
-  string), not your machine's hostname — proving the code executed in the
-  container.
-- `os.environ.get("HOST_ONLY_SECRET")` prints `<unset in sandbox>` — the host's
-  secret is **unreachable** from sandbox code, proving the trust boundary.
-
-Additionally, the sandbox is configured `deny-all` for network egress
-(`agent/sandbox/sandbox.ts`), so model-generated code cannot phone home.
-
-> Why this matters: tools run in the **app runtime** with full `process.env`,
-> but `run_python` deliberately delegates all execution to `ctx.getSandbox()`.
-> The host never executes model-authored code.
-
----
-
-## Proof 2 — Durability via crash recovery (the headline)
-
-This proves the Postgres event log — not any Vercel service — is what makes
-sessions durable. We interrupt the host mid-run and confirm the run resumes
-from the last completed step, without re-running completed sandbox steps.
-
-### Step-by-step runbook
-
-**1. Confirm a clean slate and start a run.**
+Build and start Eve with `NODE_ENV=production`, then shape the request like a
+public host even when testing through loopback:
 
 ```bash
-make observe        # note the current runs (may be empty)
-make session        # kicks off the 3-step analysis; note the sessionId
+curl -i \
+  -H 'Host: agent.example.test' \
+  http://127.0.0.1:3000/eve/v1/info
 ```
 
-**2. Watch it begin and reach a step boundary.** Stream the session or poll the
-event log; wait until at least the first step has completed:
+Expected: `401` with no model work started.
+
+Repeat with the configured Basic credentials:
 
 ```bash
-# Event log: completed steps accumulate here
-docker exec steve-postgres psql -U world -d world \
-  -c "select type, count(*) from workflow.workflow_events group by type order by 2 desc;"
-# Look for step_completed >= 1 before continuing.
+set -a && . ./.env && set +a
+curl --fail --user "$ROUTE_AUTH_BASIC_USER:$ROUTE_AUTH_BASIC_PASSWORD" \
+  -H 'Host: agent.example.test' \
+  http://127.0.0.1:3000/eve/v1/info
 ```
 
-You can also watch live:
+Expected: validated agent metadata. The health route remains public for load
+balancers. Run the production URL check through TLS with:
 
 ```bash
-make observe        # the run shows status R (running)
+set -a && . ./.env && set +a
+SELF_HOST_URL="https://agent.example.com" \
+SELF_HOST_EXPECT_AUTH=1 \
+pnpm smoke:self-host
 ```
 
-**3. Kill the host mid-run** (between steps). In the terminal running `make dev`,
-press `Ctrl-C`, or from elsewhere:
+## 3. Sandbox isolation
+
+Start PostgreSQL and the headless Eve host:
 
 ```bash
-pkill -f "eve dev --no-ui"
-```
-
-**4. Inspect the event log while the host is down.** The completed steps are
-durably recorded in Postgres; nothing is lost:
-
-```bash
-make observe        # run still listed; status reflects last persisted state
-docker exec steve-postgres psql -U world -d world \
-  -c "select type, count(*) from workflow.workflow_events group by type order by 2 desc;"
-# Record the step_completed count here — call it N.
-```
-
-**5. Restart the host.**
-
-```bash
+pnpm db:up
+pnpm db:migrate
 make dev
 ```
 
-On startup the Postgres world re-enqueues active runs (you'll see
-`[world-postgres] Re-enqueued N active run(s) on startup` in the log) and the
-queue resumes.
-
-**6. Confirm correct resume.**
+In another terminal:
 
 ```bash
-make observe        # the SAME runId continues; it advances past N and completes
-docker exec steve-postgres psql -U world -d world \
-  -c "select type, count(*) from workflow.workflow_events group by type order by 2 desc;"
-# step_started for the already-completed steps does NOT increase beyond N;
-# new step_completed events appear only for the remaining steps, and a
-# run_completed event lands at the end.
+make proof-isolation
 ```
 
-### What proves durability
+Stream the returned session and inspect the `run_python` result. It must show:
 
-- The **same `runId`** resumes after the restart (no new session).
-- The `step_completed` events recorded before the kill are **replayed, not
-  re-executed** — eve restores their results from the Postgres event log.
-- The run reaches `run_completed` despite the process having died mid-run.
-- There is **no Vercel Workflow** anywhere in the loop; the only durable store
-  is the `workflow.*` tables in your Postgres container.
+- a container hostname rather than the host machine's name;
+- `<unset in sandbox>` for `HOST_ONLY_SECRET`;
+- a completed `run_python` action;
+- no successful network access from the container.
 
-### Evidence to capture
+This proves the boundary for model-authored Python. It does not imply that Eve
+or authored TypeScript tools run outside the trusted application process.
 
-- `make observe` output before and after the restart (same runId, advancing).
-- The `workflow.workflow_events` type counts before and after (completed steps
-  preserved; only remaining steps added).
-- The host log line `[world-postgres] Re-enqueued N active run(s) on startup`.
-- Optionally, `make observe-web` screenshots of the event log timeline.
+## 4. Durable follow-ups
 
----
-
-## Proof 3 — No Vercel coupling
+The reusable smoke client sends two turns through one `ClientSession`:
 
 ```bash
-make proof-novercel
-# Scanning authored source + .env for ACTIVE Vercel coupling...
-# CLEAN: no active Vercel coupling in agent/ or .env.
+pnpm smoke:self-host
 ```
 
-The check fails the build if any of these appear (uncommented) in `agent/` or
-`.env`: `vercel()` sandbox backend, `vercelOidc()`, `AI_GATEWAY_API_KEY`,
-`VERCEL_OIDC_TOKEN`, `vercel deploy`, `@vercel/otel`.
+Expected evidence:
 
-Corroborating facts:
+- the first turn calls `run_python` and returns 2010 and Christopher Nolan;
+- the second turn calls `run_python` and returns 8.8;
+- both results carry the same Eve session ID;
+- neither turn reports `failed`;
+- a 60-second Python request accepts cancellation and settles in under 30
+  seconds because the tool has a 15-second execution ceiling;
+- a 300,000-byte Python response is truncated at the combined 256 KiB output cap.
 
-- `agent/agent.ts` uses `openai("...")` — a provider **object**, which bypasses
-  the AI Gateway. (When the key has no quota, the error message comes straight
-  from `api.openai.com`, confirming the direct path.)
-- `agent/channels/eve.ts` uses only `localDev()` + `httpBasic()` — no
-  `vercelOidc()`.
-- `agent/sandbox/sandbox.ts` pins the `docker()` backend.
-- `agent/instrumentation.ts` uses the vanilla OpenTelemetry SDK, not
-  `@vercel/otel`.
-- The build emits a standard Nitro Node output under `.output/` (run
-  `eve build` with `VERCEL` unset); there is no `.vercel/output`.
+The Eve eval suite separately covers lookup, follow-up continuity, host-secret
+isolation, and blocked network egress:
 
----
-
-## Captured evidence (live run, eve 0.13.3 + world-postgres 5.0.0-beta.19)
-
-All three proofs were executed live against a funded OpenAI key.
-
-### Proof 1 — Isolation (captured)
-
-Request: print `socket.gethostname()` and `HOST_ONLY_SECRET` from inside the sandbox.
-
-```
-sandbox output:
-  e318ab324dcb            <- Docker container id (NOT the host)
-  <unset in sandbox>      <- HOST_ONLY_SECRET is unreachable from the sandbox
-
-host for comparison:
-  hostname            = computer.local
-  HOST_ONLY_SECRET    = if-you-can-read-this-from-the-sandbox-isolation-is-broken
+```bash
+pnpm test:eval
 ```
 
-The container hostname differs from the host, and the host-only secret is not
-visible to sandbox code. A live sandbox container was observed during runs:
-`eve-sbx-ses-docker-...-wrun_...` from image `ghcr.io/vercel/eve:latest`.
+These calls use the configured external model provider and may incur cost.
 
-### Proof 2 — Durability via crash recovery (captured)
+## 5. Process crash recovery
 
-Session `wrun_01KVVM0E6QPQ73R691M227K9BM`:
+Run this against the systemd deployment, not `eve dev`:
 
-| Phase | `step_completed` events | run status |
-| --- | --- | --- |
-| After first step, before kill | **2** | running |
-| Host killed mid-run (`kill -9`, step 3 in flight: `step_started`=3) | 2 (persisted) | running |
-| After restart, run resumes and finishes | **6** | turn `completed` |
+1. Start a request that produces more than one tool/model step.
+2. Record the Eve session ID and wait for at least one completed action.
+3. Run `make -C deploy demo-kill`.
+4. Wait for `steve.service` to restart and the client stream to reconnect.
+5. Run `make -C deploy demo-events SESSION=<session-id>`.
 
-Key facts proving correct resume:
-- The **same session id** resumed (no new session created).
-- Final `step_started == step_completed == 6` — **no completed step was
-  re-run** (counts would diverge if steps replayed as fresh executions).
-- The turn run reached `run_completed`; the parent session parked at `running`.
-- The agent still produced a correct, fully-computed analysis after the crash
-  (500 orders, total revenue $410,968.32, per-product/region breakdowns).
+The SQL helper joins events to runs where the run ID or `$eve.root` attribute
+matches the selected session. Evidence from unrelated historical runs is
+excluded. Use the saved Eve stream or trace alongside this summary when checking
+individual action call IDs; aggregate Workflow event counts alone do not prove
+that a tool side effect ran exactly once.
 
-The only durable store in the loop is the `workflow.*` tables in the local
-Postgres container — no Vercel Workflow.
+Pass criteria:
 
-### Proof 3 — No Vercel coupling (captured)
+- systemd starts a new Eve process after the forced kill;
+- the selected durable session continues rather than creating a replacement;
+- previously completed action call IDs are not emitted as new calls after restart;
+- the turn eventually waits, completes, or cancels without corrupting replay.
 
+For an upgrade rehearsal, restore a production backup into a disposable
+PostgreSQL instance and repeat this procedure before migrating the live host.
+
+## 6. Routing and telemetry
+
+Validate the rendered Caddy configuration in both domain and IP-only modes.
+Both modes must route these prefixes to Eve:
+
+```text
+/eve/*
+/.well-known/workflow/*
 ```
-$ make proof-novercel
-Scanning authored source + .env for ACTIVE Vercel coupling...
-CLEAN: no active Vercel coupling in agent/ or .env.
-```
 
-### Sample analysis output (3-step run)
+With Jaeger enabled, complete a turn and query the Jaeger UI for service
+`steve`. The trace should include an `ai.eve.turn` parent with AI SDK model and
+tool spans. Prompt and output bodies should be absent unless their explicit
+OTel opt-in variables are true.
 
-A representative completed run generated 1,000 synthetic orders in
-`/workspace/sales.csv`, then computed (all inside the sandbox): total units
-9,790; gross sales 305,849.41; net sales 269,862.90; average discount 11.85%;
-plus per-product and per-region breakdowns — and summarized them with the
-underlying assumptions stated. Every number came from sandbox computation, not
-the model guessing.
+## What this does not prove
+
+- high availability or multi-region durability;
+- off-host backup retention or tested disaster recovery;
+- tenant isolation beyond one shared Basic-auth boundary;
+- CPU and memory quotas for Docker sandboxes;
+- provider-side privacy, availability, or retention guarantees;
+- fitness of Eve preview APIs for regulated production data.

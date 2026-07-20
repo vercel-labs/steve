@@ -1,112 +1,103 @@
-# Demo — steve, a fully self-hosted eve agent
+# Demo: Steve on self-hosted Eve infrastructure
 
-A ~5 minute live demo that shows the whole thesis end to end: a durable,
-multi-step agent that **writes and runs its own code in an isolated sandbox**,
-produces a **visual result**, and runs entirely on **independent infrastructure
-with zero Vercel coupling**.
+This five-minute walkthrough demonstrates a durable Eve agent running on a
+regular Node.js host with PostgreSQL and Docker. Replace `<app-domain>` with the
+TLS-enabled deployment URL.
 
-- **App:** https://eve.phil.bingo
-- **Monitoring:** https://status.eve.phil.bingo
+The precise claim is:
 
-> The agent is public (`none()` auth) for the demo, so no login is needed.
+> Eve, Workflow state, sandbox execution, the web app, and telemetry run on the
+> operator's host. Model inference goes directly to the configured OpenAI or
+> Anthropic API, without Vercel-managed runtime services.
 
----
+## Before the demo
 
-## The one-liner
+1. Confirm `systemctl status steve steve-web` is healthy.
+2. Load `.env`, then run the smoke test:
 
-> "This is an AI agent built on Vercel's `eve` framework — but running entirely
-> on a $24 DigitalOcean droplet I control. No Vercel. The model writes Python,
-> runs it in an isolated Docker sandbox, the run is durable in Postgres, and the
-> result renders as a live chart. Let me show you."
-
----
-
-## Act 1 — It does real work, and you can see it (≈2 min)
-
-steve is a **movie-database analyst**: a recognizable ~40-film dataset is seeded
-into its sandbox at `/workspace/movies.csv`, so answers are checkable by eye.
-
-1. Open **https://eve.phil.bingo**. (Optional: click **"What can you do?"** to
-   show it describes its skills — lookup, rank, aggregate, profit/ROI, chart.)
-2. Click a suggestion or type:
-
-   > Top 5 movies by box office — and chart it
-
-3. Narrate the steps as they stream — these are **real durable checkpoints**, not
-   a single model call:
-   - **Compute** — writes Python that reads the seeded CSV and ranks by box office.
-   - **Chart** — builds a Mermaid chart spec from the computed numbers.
-   - **Answer** — the reply, with a **live bar chart** rendered inline.
-
-   Expand the `run_python` tool call to show the audience the **actual Python the
-   model wrote** — and point out it ran in a container, not on the host.
-
-4. Land the point: *"Avatar, Endgame, Titanic — those are right, and every number
-   came from code the model wrote and ran in an isolated sandbox. Nothing was
-   hallucinated, and none of it touched Vercel."* Follow up with a derived metric
-   to show it's not canned: **"Most profitable film relative to its budget"**
-   (Whiplash / Get Out rank high — tiny budgets, big returns).
-
-## Act 2 — It's genuinely self-hosted (≈1 min)
-
-1. In a terminal:
    ```bash
-   curl -I https://eve.phil.bingo/eve/v1/health
+   set -a && . ./.env && set +a
+   SELF_HOST_URL=https://<app-domain> SELF_HOST_EXPECT_AUTH=1 pnpm smoke:self-host
    ```
-   Point at the **`x-hosted-on-vercel: false`** header — injected by our own
-   Caddy on the droplet.
-2. Open **https://status.eve.phil.bingo** (Beszel). Show live CPU / memory /
-   **Docker containers** — you can see `steve-postgres` and the ephemeral
-   `eve-sbx-...` sandbox container that ran the analysis. *"This is the actual
-   box. There's the sandbox container that just ran the model's code."*
+3. Confirm the sandbox image is already present so the first visible turn is not a cold pull.
+4. Have the Basic auth username and password available without displaying them.
 
-## Act 3 — It's durable (the headline, ≈2 min)
+## 1. Show useful work
 
-This is the most counterintuitive, memorable part: **kill the agent mid-run and
-watch it resume.**
+1. Open `https://<app-domain>` and sign in.
+2. Choose **Top 5 movies by box office - and chart it**.
+3. Expand the `run_python` tool card while the answer streams.
+4. Point out that the code reads `/workspace/movies.csv` and returns computed values.
+5. Show the rendered Mermaid chart and the accompanying figures.
 
-1. Start a multi-step request in the UI, e.g. "Average box office by decade — and
-   chart it" (this does compute → chart, so there are steps to interrupt).
-2. As soon as the first step completes, **kill the agent process** on the droplet:
-   ```bash
-   cd deploy && make demo-kill          # hard-restarts the eve host mid-run
-   ```
-3. The UI stream blips, then **the same run continues and finishes** — the
-   completed steps are *not* re-run.
-4. Prove it from the durable event log:
-   ```bash
-   make demo-events                     # step_started == step_completed, run_completed
-   ```
-   *"The process died, but the run survived — because durability lives in
-   Postgres on this droplet, not in any managed Vercel service. It picked up
-   exactly where it left off."*
+Use a checkable follow-up:
 
----
+> What year was Inception, who directed it, and what rating does this dataset
+> give it?
 
-## Backup / variations
+The bundled reference values are 2010, Christopher Nolan, and 8.8. They are
+approximate dataset values, not claims that the model independently verified
+against the web.
 
-- **Eye-check facts:** "What year was Inception? Who directed it?" → 2010,
-  Christopher Nolan. "How much did Titanic make?" → ~$2.2B. Validates that
-  answers come from real data, not the model guessing.
-- **Comparisons:** "Compare Nolan and Spielberg by average rating", "Which genre
-  has the highest average box office?", "Show box office share by genre as a pie
-  chart."
-- **Derived metrics:** "Most profitable film relative to budget" (ROI ranking
-  surfaces Whiplash, Get Out, Parasite — small budgets, outsized returns).
-- **Isolation proof:** ask "use run_python to print your container hostname and
-  try to read the HOST_ONLY_SECRET env var." It prints a Docker container id and
-  `<unset in sandbox>` — proving the host's secrets are unreachable.
+## 2. Show the trust boundary
 
-## If something goes wrong
+Ask:
 
-- **UI loads but no response:** check the agent — `make status` (look for
-  `steve` active). Restart with `make demo-restart` if needed.
-- **Chart shows as code, not a diagram:** the model occasionally forgets the
-  fenced ` ```mermaid ` block; just ask "render that as a mermaid chart."
-- **Slow first run:** the sandbox image may be cold; the very first run after a
-  deploy pulls `ghcr.io/vercel/eve:latest`. Do a throwaway run before presenting.
+> Use run_python to print the container hostname and
+> os.environ.get("HOST_ONLY_SECRET", "<unset in sandbox>").
 
-## Reset between demos
+The expected result contains a container hostname and `<unset in sandbox>`.
+This demonstrates that model-authored Python ran in Docker without receiving the
+host process environment. The Docker backend also has `deny-all` network egress.
 
-Nothing is required — each request is a new session. To clear history in the
-browser, just reload the page.
+Do not claim that all code runs in the sandbox. Authored TypeScript tools and
+Eve itself run in the trusted app process; only delegated shell, file, and
+Python work runs through the sandbox.
+
+## 3. Show durability
+
+1. Start a multi-step request such as **Average box office by decade - and chart it**.
+2. Wait until at least one tool result appears.
+3. From `deploy/`, run `make demo-kill`.
+4. Watch the client reconnect and the same durable session settle after systemd restarts Eve.
+
+Retrieve the session ID from the browser console:
+
+```js
+JSON.parse(localStorage.getItem("steve:eve-chat:v1")).session.sessionId
+```
+
+Then inspect only that run tree:
+
+```bash
+make demo-events SESSION=<session-id>
+```
+
+The evidence is the same session and child-run IDs continuing after process
+replacement, with previously completed actions represented by their durable
+events rather than a second user session.
+
+## 4. Show the host
+
+Use whichever operational view is enabled:
+
+- `make status` for systemd and container state;
+- `docker ps` for PostgreSQL and session sandboxes;
+- `pnpm observe` for Workflow runs;
+- Jaeger for the `ai.eve.turn` trace hierarchy;
+- Beszel for host metrics, when configured.
+
+Treat `x-hosted-on-vercel: false` as informational metadata, not proof. The
+deployment configuration, process list, network bindings, and durable database
+are the substantive evidence.
+
+## Failure recovery
+
+- `401`: verify the Basic credentials and confirm both route-auth variables are set.
+- UI loads but turns stall: confirm Caddy forwards `/.well-known/workflow/*`.
+- First sandbox call is slow: pre-pull the pinned image digest.
+- No traces: confirm `OTEL_EXPORTER_OTLP_ENDPOINT` and the collector's OTLP/HTTP receiver.
+- Chart appears as text: ask the agent to return the computed Mermaid source in a fenced block.
+
+Signing out clears the browser's stored Eve cursor and event history. In local
+development, clear `steve:eve-chat:v1` from local storage to start over.
