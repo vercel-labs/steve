@@ -20,8 +20,8 @@ const mono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "steve",
-  description: "A Next.js starter for eve agents with AI Elements.",
+  title: "steve — self-hosted Eve movie analyst",
+  description: "A self-hosted Eve runtime with Postgres durability and a Docker sandbox.",
 };
 
 export default function RootLayout({ children }: { readonly children: ReactNode }) {
