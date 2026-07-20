@@ -27,7 +27,6 @@
     - role: app
     - role: frontend
     - role: monitoring
-      when: monitoring_enabled | default(false)
     - role: jaeger
       when: jaeger_enabled | default(false)
     - role: caddy
@@ -37,11 +36,39 @@
     - name: Wait for the eve agent to answer on localhost
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ app_port }}/eve/v1/health"
-        status_code: [200, 401]
+        status_code: [200]
       register: health
       retries: 20
       delay: 3
-      until: health.status in [200, 401]
+      until: health.status == 200
+
+    - name: Verify production-shaped requests fail closed without credentials
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ app_port }}/eve/v1/info"
+        headers:
+          Host: "{{ domain if (domain | default('') | length > 0) else inventory_hostname }}"
+          X-Forwarded-Proto: https
+        status_code: [401]
+
+    - name: Verify a spoofed loopback Host cannot enable local development auth
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ app_port }}/eve/v1/info"
+        headers:
+          Host: localhost
+          X-Forwarded-Proto: https
+        status_code: [401]
+
+    - name: Verify configured Basic credentials reach the agent
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ app_port }}/eve/v1/info"
+        url_username: "{{ route_auth_credentials.username }}"
+        url_password: "{{ route_auth_credentials.password }}"
+        force_basic_auth: true
+        headers:
+          Host: "{{ domain if (domain | default('') | length > 0) else inventory_hostname }}"
+          X-Forwarded-Proto: https
+        status_code: [200]
+      no_log: true
 
     - name: Wait for the web UI to answer on localhost
       ansible.builtin.uri:
@@ -51,6 +78,62 @@
       retries: 20
       delay: 3
       until: web_up.status == 200
+
+    - name: Set the public deployment origin
+      ansible.builtin.set_fact:
+        public_origin: >-
+          {{ 'https://' + domain
+             if (domain | default('') | length > 0)
+             else 'http://' + inventory_hostname }}
+
+    - name: Verify the public Caddy health route
+      ansible.builtin.uri:
+        url: "{{ public_origin }}/eve/v1/health"
+        status_code: [200]
+      register: public_health
+      retries: 20
+      delay: 3
+      until: public_health.status == 200
+
+    - name: Verify the public Caddy UI route
+      ansible.builtin.uri:
+        url: "{{ public_origin }}/"
+        status_code: [200]
+      register: public_web
+      retries: 20
+      delay: 3
+      until: public_web.status == 200
+
+    - name: Verify the public Caddy agent route rejects anonymous access
+      ansible.builtin.uri:
+        url: "{{ public_origin }}/eve/v1/info"
+        status_code: [401]
+      register: public_auth_required
+      retries: 20
+      delay: 3
+      until: public_auth_required.status == 401
+
+    - name: Verify Basic auth through public HTTPS and Caddy
+      when: domain | default('') | length > 0
+      ansible.builtin.uri:
+        url: "{{ public_origin }}/eve/v1/info"
+        url_username: "{{ route_auth_credentials.username }}"
+        url_password: "{{ route_auth_credentials.password }}"
+        force_basic_auth: true
+        status_code: [200]
+      register: public_authenticated
+      retries: 20
+      delay: 3
+      until: public_authenticated.status == 200
+      no_log: true
+
+    - name: Record the successfully deployed Eve version
+      ansible.builtin.copy:
+        dest: "{{ eve_state_dir }}/deployed-eve-version"
+        content: "{{ target_eve_version.stdout | trim }}\n"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0644"
 
     - name: Deployment summary
       ansible.builtin.debug:
@@ -69,7 +152,7 @@
             {{ ('Traces: https://' + jaeger_domain + '/  (Jaeger; '
                 + ('Basic auth user ' + jaeger_basic_auth_user
                    if (jaeger_basic_auth_hash | default('') | length > 0)
-                   else 'no Basic auth — set JAEGER_BASIC_AUTH_HASH to enable') + ')')
+                   else 'disabled until JAEGER_BASIC_AUTH_HASH is set') + ')')
                if (jaeger_enabled | default(false) and (jaeger_domain | default('') | length > 0))
                else 'Traces: Jaeger disabled or not exposed' }}
-          - "Header check: curl -I returns 'x-hosted-on-vercel: false'."
+          - "Deployment metadata: responses include 'x-hosted-on-vercel: false'."

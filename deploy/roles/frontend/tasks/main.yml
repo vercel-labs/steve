@@ -3,8 +3,8 @@
 # The repo is already cloned at {{ app_dir }} and dependencies installed by the
 # `app` role, so this role only builds the web app and runs `next start`.
 #
-# Topology: Caddy ({{ domain }}) -> Next ({{ web_port }}) -> /eve/v1/* proxied
-# to the local agent ({{ web_eve_origin }}) via EVE_NEXT_PRODUCTION_ORIGIN.
+# Topology: Caddy sends /eve/* and /.well-known/workflow/* to the agent;
+# everything else goes to this Next.js service.
 
 # `next build` needs ~1.5GB; the 2GB droplet (Postgres + agent + Docker) has
 # too little free RAM and no swap, so the build OOMs. Add a swapfile first
@@ -51,12 +51,12 @@
 
 - name: Build the Next.js app
   ansible.builtin.command:
-    cmd: pnpm build
+    cmd: pnpm run build:web
     chdir: "{{ app_dir }}"
   become: true
   become_user: "{{ app_user }}"
   environment: >-
-    {{ pnpm_env | combine({'EVE_NEXT_PRODUCTION_ORIGIN': web_eve_origin,
+    {{ pnpm_env | combine({'EVE_SELF_HOSTED': '1',
                            'NEXT_TELEMETRY_DISABLED': '1',
                            'NODE_OPTIONS': '--max-old-space-size=1536'}) }}
   register: web_build

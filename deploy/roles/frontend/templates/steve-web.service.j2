@@ -1,7 +1,6 @@
 # Managed by Ansible (frontend role).
-# Next.js UI (withEve + useEveAgent). Public site; proxies /eve/v1/* to the
-# local eve agent via EVE_NEXT_PRODUCTION_ORIGIN. Bound to localhost; Caddy is
-# the only public entry.
+# Next.js UI (withEve + useEveAgent). Caddy sends Eve protocol routes directly
+# to the agent and sends all other paths here.
 [Unit]
 Description=steve-web — Next.js UI for the eve agent
 After=network-online.target steve.service
@@ -15,14 +14,9 @@ WorkingDirectory={{ app_dir }}
 Environment=HOME=/home/{{ app_user }}
 Environment=NODE_ENV=production
 Environment=NEXT_TELEMETRY_DISABLED=1
+Environment=EVE_SELF_HOSTED=1
 Environment=PORT={{ web_port }}
 Environment=HOSTNAME=127.0.0.1
-# Tell Next where the eve agent lives so it proxies /eve/v1/* to it.
-Environment=EVE_NEXT_PRODUCTION_ORIGIN={{ web_eve_origin }}
-# Relax pnpm 11 supply-chain policy for the implicit deps-status check that
-# `pnpm start` runs (PoC pins day-old beta versions on purpose).
-Environment=PNPM_CONFIG_MINIMUM_RELEASE_AGE=0
-Environment=PNPM_CONFIG_DANGEROUSLY_ALLOW_ALL_BUILDS=true
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=/usr/bin/pnpm start --port {{ web_port }} --hostname 127.0.0.1
 Restart=always

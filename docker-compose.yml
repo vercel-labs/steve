@@ -1,37 +1,37 @@
-# Self-hosted infrastructure for the eve PoC.
-# No Vercel services: durability is Postgres; traces go to local Jaeger (prod)
-# or the local Observe dashboard (dev, via @open-observe/sdk).
+# Local infrastructure for the self-hosted Eve runtime.
 services:
   postgres:
     image: postgres:16
     container_name: steve-postgres
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: world
-      POSTGRES_PASSWORD: world
-      POSTGRES_DB: world
+      POSTGRES_USER: "${POSTGRES_USER:-world}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-world}"
+      POSTGRES_DB: "${POSTGRES_DB:-world}"
     # Host port 5544 (not 5432) to avoid clashing with other local Postgres
     # instances. The container still listens on 5432 internally.
     ports:
-      - "5544:5432"
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5544}:5432"
     volumes:
       - steve-pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U world -d world"]
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  # Optional: portable OpenTelemetry trace backend (stretch goal).
+  # Optional local OpenTelemetry trace backend.
   # Start with `docker compose --profile observability up -d`.
   jaeger:
     image: jaegertracing/all-in-one:1.60
     container_name: steve-jaeger
+    restart: unless-stopped
     profiles: ["observability"]
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
     ports:
-      - "16686:16686" # Jaeger UI
-      - "4318:4318"   # OTLP HTTP receiver
+      - "127.0.0.1:16686:16686" # Jaeger UI
+      - "127.0.0.1:4318:4318"   # OTLP HTTP receiver
 
 volumes:
   steve-pgdata:

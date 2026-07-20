@@ -9,7 +9,7 @@
 # which writes it to the agent on connect). See deploy/README.md.
 services:
   beszel:
-    image: henrygd/beszel:latest
+    image: henrygd/beszel@sha256:a849ad80814b6a1a3be665304dcace5d4854b3bed7bde4dd1227e8ce1b82d477
     container_name: beszel-hub
     restart: unless-stopped
     # Hub UI bound to localhost; Caddy terminates TLS and proxies to it.
@@ -19,7 +19,7 @@ services:
       - ./hub_data:/beszel_data
 
   beszel-agent:
-    image: henrygd/beszel-agent:latest
+    image: henrygd/beszel-agent@sha256:8874e2c53f9de5e063a6a80d6b617e20fa593ac5dc4eb4c6ce1f912f510f38f8
     container_name: beszel-agent
     restart: unless-stopped
     network_mode: host

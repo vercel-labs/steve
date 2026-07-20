@@ -44,6 +44,7 @@
     owner: "{{ app_user }}"
     group: "{{ app_user }}"
     mode: "0700"
+  become: true
 
 - name: Generate a dedicated GitHub deploy key
   community.crypto.openssh_keypair:
@@ -86,7 +87,8 @@
       ============================================================
       ACTION REQUIRED — add this read-only Deploy Key to the repo:
 
-        https://github.com/vercel-labs/steve/settings/keys/new
+        Repository: {{ app_repo }}
+        Open its Settings -> Deploy keys -> Add deploy key page.
 
       Title: steve-droplet
       Key (leave "Allow write access" UNCHECKED):
@@ -133,8 +135,8 @@
   become: true
 
 # --- Environment ----------------------------------------------------------
-# PoC simplicity: ship your local .env verbatim instead of templating from a
-# vault. The file is gitignored and never committed.
+# Reference deployment: copy the operator's gitignored runtime environment.
+# Replace this with a secret manager or Ansible Vault for larger deployments.
 - name: Ensure a local .env exists to copy
   ansible.builtin.assert:
     that:
@@ -144,6 +146,43 @@
       .env` in the repo root and fill in real values) before deploying.
   delegate_to: localhost
   become: false
+
+- name: Validate the local production environment before publishing it
+  ansible.builtin.command:
+    argv:
+      - node
+      - "--env-file={{ local_env_file }}"
+      - -e
+      - |
+        const required = (name, minLength = 1) => {
+          const value = process.env[name] ?? "";
+          if (value.length < minLength) throw new Error(`${name} is missing or too short`);
+          return value;
+        };
+        if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
+          throw new Error("Set OPENAI_API_KEY or ANTHROPIC_API_KEY");
+        }
+        const username = required("ROUTE_AUTH_BASIC_USER");
+        const password = required("ROUTE_AUTH_BASIC_PASSWORD", 16);
+        const postgresPassword = required("POSTGRES_PASSWORD", 16);
+        required("WORKFLOW_POSTGRES_URL");
+        if (["change-me", "replace-with-a-long-random-password"].includes(password)) {
+          throw new Error("Replace ROUTE_AUTH_BASIC_PASSWORD");
+        }
+        if (["world", "replace-with-a-long-random-password"].includes(postgresPassword)) {
+          throw new Error("Replace POSTGRES_PASSWORD");
+        }
+        process.stdout.write(JSON.stringify({ username, password }));
+  delegate_to: localhost
+  become: false
+  register: validated_app_env
+  changed_when: false
+  no_log: true
+
+- name: Store validated route credentials for deployment checks
+  ansible.builtin.set_fact:
+    route_auth_credentials: "{{ validated_app_env.stdout | from_json }}"
+  no_log: true
 
 - name: Copy local .env to the droplet
   ansible.builtin.copy:
@@ -156,6 +195,91 @@
   notify: Restart steve
 
 # --- Dependencies ---------------------------------------------------------
+- name: Create the persistent Eve deployment state directory
+  ansible.builtin.file:
+    path: "{{ eve_state_dir }}"
+    state: directory
+    owner: "{{ app_user }}"
+    group: "{{ app_user }}"
+    mode: "0700"
+
+- name: Check for a successful deployment version marker
+  ansible.builtin.stat:
+    path: "{{ eve_state_dir }}/deployed-eve-version"
+  register: deployed_eve_marker
+
+- name: Read the last successfully deployed Eve version
+  ansible.builtin.shell:
+    cmd: |
+      if [ -f "{{ eve_state_dir }}/deployed-eve-version" ]; then
+        cat "{{ eve_state_dir }}/deployed-eve-version"
+      else
+        node -p "require('./node_modules/eve/package.json').version"
+      fi
+    chdir: "{{ app_dir }}"
+    executable: /bin/bash
+  become: true
+  become_user: "{{ app_user }}"
+  register: previous_eve_version
+  changed_when: false
+  failed_when: false
+
+- name: Preserve the deployed Eve version across interrupted upgrades
+  when: previous_eve_version.rc == 0
+  ansible.builtin.copy:
+    dest: "{{ eve_state_dir }}/deployed-eve-version"
+    content: "{{ previous_eve_version.stdout | trim }}\n"
+    owner: "{{ app_user }}"
+    group: "{{ app_user }}"
+    mode: "0644"
+
+- name: Read the requested Eve version from package.json
+  ansible.builtin.command:
+    cmd: node -p "require('./package.json').dependencies.eve"
+    chdir: "{{ app_dir }}"
+  become: true
+  become_user: "{{ app_user }}"
+  register: requested_eve_version
+  changed_when: false
+
+- name: Refuse to silently remove the domain from an existing deployment
+  when:
+    - previous_eve_version.rc == 0
+    - >-
+      deployed_eve_marker.stat.exists or
+      (previous_eve_version.stdout | trim) != (requested_eve_version.stdout | trim)
+  ansible.builtin.assert:
+    that:
+      - (domain | default('') | length > 0) or (allow_plain_http_existing_deployment | bool)
+    fail_msg: >-
+      This host already has an Eve deployment, but `domain` is empty. Set the
+      existing domain in group_vars/all.yml, or explicitly set
+      allow_plain_http_existing_deployment=true if removing HTTPS is intentional.
+
+- name: Detect an incompatible Eve replay cutover
+  ansible.builtin.set_fact:
+    eve_crosses_replay_cutover: >-
+      {{ previous_eve_version.rc == 0
+         and (previous_eve_version.stdout | trim) is version(eve_replay_cutover_version, '<')
+         and (requested_eve_version.stdout | trim) is version(eve_replay_cutover_version, '>=') }}
+
+- name: Check whether the old Eve service is active
+  when: eve_crosses_replay_cutover | bool
+  ansible.builtin.command: systemctl is-active steve
+  become: true
+  register: old_eve_service
+  changed_when: false
+  failed_when: false
+
+- name: Stop the old Eve service before the incompatible replay cutover
+  when:
+    - eve_crosses_replay_cutover | bool
+    - old_eve_service.stdout | trim in ['active', 'activating', 'reloading']
+  ansible.builtin.systemd:
+    name: steve
+    state: stopped
+  become: true
+
 - name: Install Node dependencies (frozen lockfile)
   ansible.builtin.command:
     cmd: pnpm install --frozen-lockfile
@@ -165,6 +289,23 @@
   environment: "{{ pnpm_env }}"
   register: pnpm_install
   changed_when: "'Already up to date' not in pnpm_install.stdout"
+
+- name: Read the target Eve version
+  ansible.builtin.command:
+    cmd: node -p "require('./node_modules/eve/package.json').version"
+    chdir: "{{ app_dir }}"
+  become: true
+  become_user: "{{ app_user }}"
+  register: target_eve_version
+  changed_when: false
+
+- name: Verify the requested Eve version was installed
+  ansible.builtin.assert:
+    that:
+      - (target_eve_version.stdout | trim) == (requested_eve_version.stdout | trim)
+    fail_msg: >-
+      package.json requests Eve {{ requested_eve_version.stdout | trim }}, but
+      pnpm installed {{ target_eve_version.stdout | trim }}.
 
 # --- Postgres (durable Workflow world) ------------------------------------
 - name: Start Postgres via docker compose
@@ -177,16 +318,101 @@
 
 - name: Wait for Postgres to accept connections
   ansible.builtin.command:
-    cmd: docker exec steve-postgres pg_isready -U world -d world
+    cmd: docker exec steve-postgres pg_isready
   register: pg_ready
   retries: 20
   delay: 3
   until: pg_ready.rc == 0
   changed_when: false
 
+- name: Create the Workflow database backup directory
+  ansible.builtin.file:
+    path: "{{ workflow_backup_dir }}"
+    state: directory
+    owner: "{{ app_user }}"
+    group: "{{ app_user }}"
+    mode: "0700"
+  become: true
+
+- name: Set the Workflow backup path
+  ansible.builtin.set_fact:
+    workflow_backup_path: >-
+      {{ workflow_backup_dir }}/workflow-{{ ansible_date_time.iso8601_basic_short }}.dump
+
+- name: Back up the Workflow database before migration
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      partial="{{ workflow_backup_path }}.partial"
+      rm -f "$partial"
+      trap 'rm -f "$partial"' ERR
+      docker exec steve-postgres sh -c \
+        'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --file=/tmp/workflow-pre-migrate.dump && pg_restore --list /tmp/workflow-pre-migrate.dump >/dev/null'
+      docker cp steve-postgres:/tmp/workflow-pre-migrate.dump "$partial"
+      mv "$partial" "{{ workflow_backup_path }}"
+      trap - ERR
+    chdir: "{{ app_dir }}"
+    executable: /bin/bash
+  become: true
+  become_user: "{{ app_user }}"
+  changed_when: true
+
+- name: Find Workflow database backups
+  ansible.builtin.find:
+    paths: "{{ workflow_backup_dir }}"
+    patterns: "workflow-*.dump"
+    file_type: file
+  register: workflow_backups
+
+- name: Remove Workflow backups beyond the retention limit
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: >-
+    {{ (workflow_backups.files | sort(attribute='mtime', reverse=true))[workflow_backup_retention:] }}
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Check whether the Workflow runs table already exists
+  when: eve_crosses_replay_cutover | bool
+  ansible.builtin.command:
+    cmd: >-
+      docker exec steve-postgres sh -c
+      'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc
+      "select to_regclass('"'"'workflow.workflow_runs'"'"')"'
+  register: workflow_runs_table
+  changed_when: false
+
+- name: Count active runs before the incompatible Eve cutover
+  when:
+    - eve_crosses_replay_cutover | bool
+    - workflow_runs_table.stdout | trim | length > 0
+  ansible.builtin.command:
+    cmd: >-
+      docker exec steve-postgres sh -c
+      'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc
+      "select count(*) from workflow.workflow_runs where status in ('"'"'pending'"'"', '"'"'running'"'"')"'
+  register: incompatible_active_runs
+  changed_when: false
+
+- name: Refuse to replay pre-0.20 active runs on the current Eve runtime
+  when:
+    - eve_crosses_replay_cutover | bool
+    - workflow_runs_table.stdout | trim | length > 0
+  ansible.builtin.assert:
+    that:
+      - incompatible_active_runs.stdout | trim | int == 0
+    fail_msg: >-
+      Found {{ incompatible_active_runs.stdout | trim }} active Workflow run(s)
+      from Eve {{ previous_eve_version.stdout | trim }}. They cannot safely replay
+      on Eve {{ target_eve_version.stdout | trim }}. Inspect and explicitly cancel
+      the old runs with `pnpm exec workflow cancel --status running --confirm
+      --backend @workflow/world-postgres` (and repeat for pending), then rerun the
+      deployment. The pre-migration backup is in {{ workflow_backup_dir }}.
+
 - name: Migrate the Workflow world schema (idempotent)
   ansible.builtin.command:
-    cmd: pnpm exec workflow-postgres-setup
+    cmd: pnpm run db:migrate
     chdir: "{{ app_dir }}"
   become: true
   become_user: "{{ app_user }}"
@@ -200,7 +426,7 @@
 # host serves the fresh build.
 - name: Build the eve agent (eve build -> .output/)
   ansible.builtin.command:
-    cmd: pnpm exec eve build
+    cmd: pnpm run build:eve
     chdir: "{{ app_dir }}"
   become: true
   become_user: "{{ app_user }}"

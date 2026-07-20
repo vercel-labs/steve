@@ -14,6 +14,8 @@
 ANSIBLE        ?= ansible-playbook
 COLLECTIONS_DIR ?= ./.galaxy
 REF            ?=
+POSTGRES_USER  ?= world
+POSTGRES_DB    ?= world
 # Pass `make deploy REF=<git ref>` to deploy a specific branch/tag/SHA.
 EXTRA          := $(if $(REF),-e git_ref=$(REF),)
 
@@ -61,7 +63,7 @@ redeploy: deploy
 all: provision bootstrap deploy
 
 check:
-	@for pb in provision.yml bootstrap.yml deploy.yml; do \
+	@set -e; for pb in provision.yml bootstrap.yml deploy.yml; do \
 	  echo "=== $$pb ==="; $(ANSIBLE) --syntax-check $$pb; \
 	done
 
@@ -85,12 +87,12 @@ web-logs:
 	$(SSH) deploy@$(IP) 'journalctl -u steve-web -f'
 
 # --- demo helpers (see ../DEMO.md) -----------------------------------------
-# Hard-kill the eve agent mid-run to demonstrate durable resume. systemd
+# Hard-kill the Eve agent mid-run to demonstrate durable resume. systemd
 # (Restart=always) brings it right back; the in-flight run resumes from the
 # Postgres event log without re-running completed steps.
 demo-kill:
 	@test -n "$(IP)" || { echo "No droplet IP."; exit 1; }
-	@$(SSH) deploy@$(IP) 'sudo pkill -9 -f "eve dev"; true' >/dev/null 2>&1 || true
+	@$(SSH) deploy@$(IP) 'sudo systemctl kill --signal=SIGKILL --kill-who=all steve'
 	@echo "SIGKILLed the eve host. systemd (Restart=always) will bring it back;"
 	@echo "the in-flight run resumes from Postgres. Watch the UI, then: make demo-events"
 
@@ -98,15 +100,14 @@ demo-restart:
 	@test -n "$(IP)" || { echo "No droplet IP."; exit 1; }
 	$(SSH) deploy@$(IP) 'sudo systemctl restart steve && echo restarted'
 
-# Show the durable event-log proof: per-type event counts + run statuses.
-# step_started == step_completed means no completed step was re-run on resume.
+# Scope the durable event log to one Eve session and its child runs.
 demo-events:
 	@test -n "$(IP)" || { echo "No droplet IP."; exit 1; }
-	$(SSH) deploy@$(IP) 'docker exec steve-postgres psql -U world -d world \
-	  -c "select type, count(*) from workflow.workflow_events group by type order by 2 desc;" \
-	  -c "select status, count(*) from workflow.workflow_runs group by status;"'
+	@test -n "$(SESSION)" || { echo "Pass SESSION=<eve session id>."; exit 1; }
+	$(SSH) deploy@$(IP) 'docker exec steve-postgres psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) \
+	  -c "select e.type, count(*) from workflow.workflow_events e join workflow.workflow_runs r on r.id = e.run_id where r.id = '\''$(SESSION)'\'' or r.attributes->>'\''\$$eve.root'\'' = '\''$(SESSION)'\'' group by e.type order by e.type;" \
+	  -c "select id, name, status from workflow.workflow_runs where id = '\''$(SESSION)'\'' or attributes->>'\''\$$eve.root'\'' = '\''$(SESSION)'\'' order by created_at;"'
 
 destroy-hint:
-	@echo "Destroy the droplet from the DigitalOcean dashboard, or set"
-	@echo "state: absent in roles/provision/tasks/main.yml and re-run provision."
+	@echo "Destroy the droplet from the DigitalOcean dashboard or API."
 	@echo "Then delete inventory.ini."
