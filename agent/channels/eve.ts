@@ -1,14 +1,24 @@
 import { eveChannel } from "eve/channels/eve";
-import { none } from "eve/channels/auth";
+import { type AuthFn, httpBasic, localDev, placeholderAuth } from "eve/channels/auth";
 
-// HTTP channel only (no Slack/Connect). No vercelOidc() — this deployment has
-// zero Vercel coupling.
-//
-// PoC NOTE: routes are intentionally PUBLIC (none()) so the Next.js UI can call
-// the agent without credentials. This is a demo/PoC choice — the agent is openly
-// accessible at the deployed origin. To lock it down, swap back to
-// [localDev(), httpBasic({...})] (and have the UI inject the Basic credential
-// server-side) or [localDev(), vercelOidc()].
+const username = process.env.ROUTE_AUTH_BASIC_USER?.trim();
+const password = process.env.ROUTE_AUTH_BASIC_PASSWORD;
+
+// Local loopback requests remain frictionless. Every non-loopback request must
+// authenticate, and a missing production credential fails closed with Eve's
+// setup-focused 401 response.
+const configuredAuth =
+  username && password ? httpBasic({ username, password }) : placeholderAuth();
+const productionAuth: AuthFn<Request> = (request) => {
+  const forwardedProtocol = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  if (new URL(request.url).protocol !== "https:" && forwardedProtocol !== "https") {
+    return null;
+  }
+  return configuredAuth(request);
+};
+
 export default eveChannel({
-  auth: [none()],
+  auth:
+    process.env.NODE_ENV === "production" ? [productionAuth] : [localDev(), productionAuth],
+  uploadPolicy: "disabled",
 });
