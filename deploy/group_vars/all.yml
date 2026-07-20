@@ -86,8 +86,10 @@ beszel_agent_port: 45876
 # Leave these empty until Beszel's Add System flow provides them.
 beszel_agent_key: ""
 beszel_agent_token: "{{ lookup('env', 'BESZEL_AGENT_TOKEN') | default('', true) }}"
-# Hub URL the agent connects back to. Set it when monitoring is enabled.
-beszel_hub_url: ""
+# Hub URL the agent connects back to. Override with BESZEL_HUB_URL.
+beszel_hub_url: >-
+  {{ lookup('env', 'BESZEL_HUB_URL')
+     | default('https://status.eve.phil.bingo', true) }}
 
 # --- Tracing (Jaeger) -----------------------------------------------------
 # Jaeger runs on this droplet via Docker and receives eve's OpenTelemetry trace
@@ -102,9 +104,11 @@ jaeger_dir: "/opt/jaeger"
 jaeger_ui_port: 16686
 # OTLP/HTTP receiver the agent ships spans to (bound to localhost).
 jaeger_otlp_port: 4318
-# Public subdomain for the Jaeger UI (needs its own A record -> droplet IP).
-# Leave empty to keep Jaeger internal (reach it via SSH tunnel instead).
-jaeger_domain: ""
+# Public subdomain for the Jaeger UI. Override with JAEGER_DOMAIN; set the env
+# variable to an alternate hostname when deploying another environment.
+jaeger_domain: >-
+  {{ lookup('env', 'JAEGER_DOMAIN')
+     | default('jaeger.eve.phil.bingo', true) }}
 # HTTP Basic credentials for the public Jaeger UI, sourced from the environment
 # at deploy time so they aren't baked into this file:
 #   JAEGER_BASIC_AUTH_USER  username (defaults to `eve` if unset)
@@ -116,17 +120,19 @@ jaeger_basic_auth_user: "{{ lookup('env', 'JAEGER_BASIC_AUTH_USER') | default('e
 jaeger_basic_auth_hash: "{{ lookup('env', 'JAEGER_BASIC_AUTH_HASH') | default('', true) }}"
 
 # --- Reverse proxy / TLS (caddy) ------------------------------------------
-# Leave empty until DNS is pointed at the droplet. While empty, Caddy serves
-# the app over plain HTTP on :80 (good for smoke-testing by IP). Once you set
-# a real domain (with an A record -> droplet IP) and re-run deploy.yml, Caddy
-# provisions a Let's Encrypt certificate automatically.
-domain: ""
+# Public app hostname. Override with APP_DOMAIN.
+domain: >-
+  {{ lookup('env', 'APP_DOMAIN')
+     | default('eve.phil.bingo', true) }}
 # Existing deployments must set this true explicitly if they intentionally
 # remove a configured domain and return to plain-HTTP IP mode.
 allow_plain_http_existing_deployment: false
-# Monitoring dashboard subdomain (needs its own A record -> droplet IP).
-# Leave empty to skip exposing Beszel publicly (access via SSH tunnel instead).
-monitoring_domain: ""
-# Email used for the Let's Encrypt ACME account (recommended once domain set).
-acme_email: ""
+# Monitoring dashboard hostname. Override with MONITORING_DOMAIN.
+monitoring_domain: >-
+  {{ lookup('env', 'MONITORING_DOMAIN')
+     | default('status.eve.phil.bingo', true) }}
+# Let's Encrypt ACME account email. Override with ACME_EMAIL.
+acme_email: >-
+  {{ lookup('env', 'ACME_EMAIL')
+     | default('phil.zona@vercel.com', true) }}
 caddy_manage: true
