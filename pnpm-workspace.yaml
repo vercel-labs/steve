@@ -1,9 +1,13 @@
 minimumReleaseAgeExclude:
   - eve
-allowBuilds:
-  sharp: false
-# Compatibility for Eve releases with an incomplete runtime manifest.
-packageExtensions:
-  "eve@>=0.6.0-beta.13 <=0.7.0":
-    dependencies:
-      oxc-parser: 0.134.0
+  - ai
+  - "@ai-sdk/anthropic"
+  - "@ai-sdk/openai"
+  - workflow
+  - "@workflow/world-postgres"
+overrides:
+  "postcss@<8.5.10": "8.5.10"
+onlyBuiltDependencies:
+  - "@swc/core"
+  - esbuild
+  - sharp
