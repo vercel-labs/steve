@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Enable pnpm
+        run: corepack enable
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --strict-peer-dependencies
+      - name: Inspect the Eve app
+        run: pnpm exec eve info --json
+      - name: Typecheck
+        run: pnpm run typecheck
+      - name: Build the Eve host
+        run: pnpm run build:eve
+      - name: Build the Next.js app
+        run: pnpm run build:web
+        env:
+          EVE_SELF_HOSTED: "1"
+          NEXT_TELEMETRY_DISABLED: "1"
+      - name: Validate Compose
+        run: docker compose config --quiet
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level high
+
+  ansible:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install Ansible
+        run: python -m pip install "ansible-core>=2.19,<2.21"
+      - name: Install Ansible collections
+        run: ansible-galaxy collection install -r deploy/requirements.yml -p deploy/.galaxy
+      - name: Syntax-check playbooks
+        run: make -C deploy check
